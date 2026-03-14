@@ -1,0 +1,30 @@
+{
+    "live_trading_settings": {
+        "active_strategies": [
+            {
+                "symbol": "BTC/USDT:USDT",
+                "timeframe": "1d",
+                "active": true,
+                "note": "QGRS Range-Prognose fuer BTC Tageskerze"
+            }
+        ]
+    },
+    "strategy": {
+        "breakout_threshold_pct": 1.5,
+        "breakout_prob_threshold": 0.60,
+        "range_threshold_pct": 1.0,
+        "range_prob_threshold": 0.65,
+        "risk_per_trade_pct": 2.0,
+        "leverage": 10,
+        "n_simulations": 10000,
+        "n_steps_intraday": 288
+    },
+    "physics": {
+        "garch_window": 100,
+        "fractal_window": 100,
+        "chaos_window": 50,
+        "info_window": 30,
+        "liquidity_bins": 100,
+        "energy_windows": [5, 14, 30]
+    }
+}

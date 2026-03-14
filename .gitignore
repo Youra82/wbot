@@ -1,0 +1,27 @@
+# Secrets
+secret.json
+secret.json.bak
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Artifacts
+artifacts/results/*.json
+artifacts/logs/
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
