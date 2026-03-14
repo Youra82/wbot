@@ -1,5 +1,6 @@
 #!/bin/bash
-# wbot QGRS Pipeline: Backtest -> Show Results
+# wbot QGRS Optimierungs-Pipeline
+
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
@@ -8,48 +9,118 @@ NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
-PYTHON=".venv/bin/python3"
+
 VENV_PATH=".venv/bin/activate"
+OPTIMIZER="src/wbot/analysis/optimizer.py"
+
+echo -e "${BLUE}======================================================="
+echo "       wbot QGRS Optimierungs-Pipeline"
+echo -e "=======================================================${NC}"
 
 if [ ! -f "$VENV_PATH" ]; then
     echo -e "${RED}Fehler: Virtuelle Umgebung nicht gefunden. Bitte install.sh ausfuehren.${NC}"
     exit 1
 fi
-
 source "$VENV_PATH"
+echo -e "${GREEN}Virtuelle Umgebung wurde erfolgreich aktiviert.${NC}"
 
-SYMBOL="${1:-BTC/USDT:USDT}"
-TIMEFRAME="${2:-1d}"
-START_CAPITAL="${3:-1000}"
-
-echo -e "${BLUE}======================================================="
-echo "      wbot QGRS Pipeline"
-echo -e "=======================================================${NC}"
-echo -e "${YELLOW}Symbol:     $SYMBOL${NC}"
-echo -e "${YELLOW}Timeframe:  $TIMEFRAME${NC}"
-echo -e "${YELLOW}Kapital:    $START_CAPITAL USDT${NC}"
-echo ""
-
-echo -e "${YELLOW}--- Starte Backtest ---${NC}"
-PYTHONPATH="$SCRIPT_DIR/src" "$PYTHON" -m wbot.analysis.backtester \
-    --symbol "$SYMBOL" \
-    --timeframe "$TIMEFRAME" \
-    --start-capital "$START_CAPITAL"
-
-if [ $? -ne 0 ]; then
-    echo -e "${RED}Fehler beim Backtest. Abbruch.${NC}"
-    exit 1
+# Aufraeum-Assistent
+echo -e "\n${YELLOW}Moechtest du alle alten, generierten Configs vor dem Start loeschen?${NC}"
+read -p "Dies wird fuer einen kompletten Neustart empfohlen. (j/n) [Standard: n]: " CLEANUP_CHOICE
+CLEANUP_CHOICE=${CLEANUP_CHOICE:-n}
+if [[ "$CLEANUP_CHOICE" == "j" || "$CLEANUP_CHOICE" == "J" ]]; then
+    rm -f src/wbot/strategy/configs/config_*.json
+    echo -e "${GREEN}Aufraumen abgeschlossen.${NC}"
+else
+    echo -e "${GREEN}Alte Ergebnisse werden beibehalten.${NC}"
 fi
 
-echo ""
-echo -e "${YELLOW}--- Zeige Ergebnisse ---${NC}"
-PYTHONPATH="$SCRIPT_DIR/src" "$PYTHON" -m wbot.analysis.show_results \
-    --symbol "$SYMBOL" \
-    --timeframe "$TIMEFRAME"
+read -p "Handelspaar(e) eingeben (ohne /USDT, z.B. BTC ETH): " SYMBOLS
+read -p "Zeitfenster eingeben (z.B. 1d 4h 6h): " TIMEFRAMES
+
+echo -e "\n${BLUE}--- Empfehlung: Optimaler Rueckblick-Zeitraum ---${NC}"
+printf "+-------------+--------------------------------+\n"
+printf "| Zeitfenster | Empfohlener Rueckblick (Tage)  |\n"
+printf "+-------------+--------------------------------+\n"
+printf "| 5m, 15m     | 15 - 90 Tage                   |\n"
+printf "| 30m, 1h     | 180 - 365 Tage                 |\n"
+printf "| 2h, 4h      | 550 - 730 Tage                 |\n"
+printf "| 6h, 1d      | 1095 - 1825 Tage               |\n"
+printf "+-------------+--------------------------------+\n"
+
+read -p "Startdatum (JJJJ-MM-TT) oder 'a' fuer Automatik [Standard: a]: " START_DATE_INPUT
+START_DATE_INPUT=${START_DATE_INPUT:-a}
+read -p "Enddatum (JJJJ-MM-TT) [Standard: Heute]: " END_DATE
+END_DATE=${END_DATE:-$(date +%F)}
+read -p "Startkapital in USDT [Standard: 1000]: " START_CAPITAL
+START_CAPITAL=${START_CAPITAL:-1000}
+read -p "CPU-Kerne [Standard: -1 fuer alle]: " N_CORES
+N_CORES=${N_CORES:--1}
+read -p "Anzahl Trials [Standard: 200]: " N_TRIALS
+N_TRIALS=${N_TRIALS:-200}
+
+echo -e "\n${YELLOW}Waehle einen Optimierungs-Modus:${NC}"
+echo "  1) Strenger Modus (Profitabel & Sicher)"
+echo "  2) 'Finde das Beste'-Modus (Max Profit)"
+read -p "Auswahl (1-2) [Standard: 1]: " OPTIM_MODE
+OPTIM_MODE=${OPTIM_MODE:-1}
+
+if [ "$OPTIM_MODE" == "1" ]; then
+    OPTIM_MODE_ARG="strict"
+    read -p "Max Drawdown % [Standard: 30]: " MAX_DD
+    MAX_DD=${MAX_DD:-30}
+    read -p "Min Win-Rate % [Standard: 40]: " MIN_WR
+    MIN_WR=${MIN_WR:-40}
+    read -p "Min PnL % [Standard: 0]: " MIN_PNL
+    MIN_PNL=${MIN_PNL:-0}
+else
+    OPTIM_MODE_ARG="best_profit"
+    read -p "Max Drawdown % [Standard: 30]: " MAX_DD
+    MAX_DD=${MAX_DD:-30}
+    MIN_WR=0
+    MIN_PNL=-99999
+fi
+
+for symbol in $SYMBOLS; do
+    for timeframe in $TIMEFRAMES; do
+
+        if [ "$START_DATE_INPUT" == "a" ]; then
+            lookback_days=365
+            case "$timeframe" in
+                5m|15m) lookback_days=60 ;;
+                30m|1h) lookback_days=365 ;;
+                2h|4h)  lookback_days=730 ;;
+                6h|1d)  lookback_days=1095 ;;
+            esac
+            FINAL_START_DATE=$(date -d "$lookback_days days ago" +%F 2>/dev/null || python3 -c "from datetime import date, timedelta; print((date.today() - timedelta(days=$lookback_days)).strftime('%Y-%m-%d'))")
+            echo -e "${YELLOW}INFO: Automatisches Startdatum fuer $timeframe (${lookback_days} Tage Rueckblick): $FINAL_START_DATE${NC}"
+        else
+            FINAL_START_DATE=$START_DATE_INPUT
+        fi
+
+        echo -e "\n${BLUE}=======================================================${NC}"
+        echo -e "${BLUE}  Bearbeite Pipeline fuer: $symbol ($timeframe)${NC}"
+        echo -e "${BLUE}  Datenzeitraum: $FINAL_START_DATE bis $END_DATE${NC}"
+        echo -e "${BLUE}=======================================================${NC}"
+
+        echo -e "\n${GREEN}>>> Starte QGRS-Optimierung fuer $symbol ($timeframe)...${NC}"
+        PYTHONPATH="src" python3 "$OPTIMIZER" \
+            --symbols "$symbol" --timeframes "$timeframe" \
+            --start_date "$FINAL_START_DATE" --end_date "$END_DATE" \
+            --jobs "$N_CORES" --max_drawdown "$MAX_DD" \
+            --start_capital "$START_CAPITAL" --min_win_rate "$MIN_WR" \
+            --trials "$N_TRIALS" --min_pnl "$MIN_PNL" --mode "$OPTIM_MODE_ARG"
+
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Fehler im Optimierer fuer $symbol ($timeframe). Ueberspringe...${NC}"
+        else
+            echo -e "${GREEN}Optimierung fuer $symbol ($timeframe) abgeschlossen.${NC}"
+        fi
+
+    done
+done
 
 deactivate
-
-echo ""
-echo -e "${BLUE}======================================================="
-echo -e "      Pipeline abgeschlossen!"
+echo -e "\n${BLUE}======================================================="
+echo -e "       Pipeline abgeschlossen!"
 echo -e "=======================================================${NC}"

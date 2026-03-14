@@ -1,30 +1,42 @@
 {
     "live_trading_settings": {
+        "max_open_positions": 5,
+        "use_auto_optimizer_results": false,
         "active_strategies": [
-            {
-                "symbol": "BTC/USDT:USDT",
-                "timeframe": "1d",
-                "active": true,
-                "note": "QGRS Range-Prognose fuer BTC Tageskerze"
-            }
+            {"symbol": "BTC/USDT:USDT",  "timeframe": "1d",  "active": true},
+            {"symbol": "ETH/USDT:USDT",  "timeframe": "1d",  "active": true},
+            {"symbol": "SOL/USDT:USDT",  "timeframe": "4h",  "active": true},
+            {"symbol": "XRP/USDT:USDT",  "timeframe": "4h",  "active": true},
+            {"symbol": "DOGE/USDT:USDT", "timeframe": "6h",  "active": true},
+            {"symbol": "ADA/USDT:USDT",  "timeframe": "6h",  "active": false},
+            {"symbol": "AAVE/USDT:USDT", "timeframe": "4h",  "active": false}
         ]
     },
-    "strategy": {
-        "breakout_threshold_pct": 1.5,
-        "breakout_prob_threshold": 0.60,
-        "range_threshold_pct": 1.0,
-        "range_prob_threshold": 0.65,
-        "risk_per_trade_pct": 2.0,
-        "leverage": 10,
-        "n_simulations": 10000,
-        "n_steps_intraday": 288
-    },
-    "physics": {
-        "garch_window": 100,
-        "fractal_window": 100,
-        "chaos_window": 50,
-        "info_window": 30,
-        "liquidity_bins": 100,
-        "energy_windows": [5, 14, 30]
+    "optimization_settings": {
+        "enabled": true,
+        "schedule": {
+            "_info": "day_of_week: 0=Montag, 6=Sonntag | hour: 0-23 (24h Format)",
+            "day_of_week": 6,
+            "hour": 15,
+            "minute": 0,
+            "interval": {
+                "_info": "Einheit: minutes | hours | days | weeks",
+                "value": 7,
+                "unit": "days"
+            }
+        },
+        "symbols_to_optimize": "auto",
+        "timeframes_to_optimize": "auto",
+        "lookback_days": "auto",
+        "start_capital": 100,
+        "cpu_cores": -1,
+        "num_trials": 200,
+        "constraints": {
+            "max_drawdown_pct": 30,
+            "min_win_rate_pct": 40,
+            "min_pnl_pct": 0
+        },
+        "auto_clear_cache_days": 0,
+        "send_telegram_on_completion": true
     }
 }

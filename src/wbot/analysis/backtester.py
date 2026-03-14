@@ -1,10 +1,8 @@
 # src/wbot/analysis/backtester.py
-# Backtest-Engine fuer wbot QGRS
+# Backtest-Engine fuer wbot QGRS (Multi-Symbol/Timeframe, Config-Dateien)
 import os
 import sys
-import json
 import logging
-import argparse
 import numpy as np
 import pandas as pd
 
@@ -13,352 +11,303 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, 'src'))
 
 logger = logging.getLogger(__name__)
 
-FEE_PCT = 0.0006       # 0.06% Taker-Fee
-SLIPPAGE_PCT = 0.0005  # 0.05% Slippage
+FEE_PCT       = 0.0006   # 0.06% Taker-Fee
+SLIPPAGE_PCT  = 0.0005   # 0.05% Slippage
+MIN_HISTORY   = 200      # Mindest-Kerzen fuer Physik-Berechnungen
 
-# Backtest nutzt weniger Simulationen fuer Geschwindigkeit
-BACKTEST_N_SIMULATIONS = 2000
-BACKTEST_N_STEPS = 100       # Vereinfachter Intraday-Pfad
-BACKTEST_WINDOW = 100        # Fenster fuer MarketState-Berechnung
+
+def load_data(symbol: str, timeframe: str, start_date_str: str, end_date_str: str) -> pd.DataFrame:
+    """
+    Laedt OHLCV-Daten fuer einen Zeitraum (mit Cache).
+    Re-Export aus data_fetcher.
+
+    Args:
+        symbol: Handelspaar (z.B. "BTC/USDT:USDT")
+        timeframe: Zeitrahmen
+        start_date_str: "YYYY-MM-DD"
+        end_date_str:   "YYYY-MM-DD"
+
+    Returns:
+        DataFrame mit [open, high, low, close, volume]
+    """
+    from wbot.utils.data_fetcher import load_data as _load
+    return _load(symbol, timeframe, start_date_str, end_date_str)
 
 
 def run_backtest(
     df: pd.DataFrame,
     config: dict,
     start_capital: float = 1000.0,
-    verbose: bool = True,
+    verbose: bool = False,
+    n_sim: int = 500,
 ) -> dict:
     """
-    Fuehrt einen vollstaendigen Backtest ueber historische Tageskerzen durch.
+    Fuehrt einen vollstaendigen Backtest ueber historische Kerzen durch.
 
-    Fuer jede Kerze (ab Window-Offset): MarketState → Simulation → Signal → Trade-Simulation.
+    Fuer jede Kerze (ab Index 200): MarketState → MonteCarlo → Forecast → Signal → Trade.
+
+    Config-Format:
+        config = {
+          "market":   {"symbol": "BTC/USDT:USDT", "timeframe": "1d"},
+          "physics":  {"garch_window": 100, "fractal_window": 100,
+                       "chaos_window": 50, "info_window": 30, "liquidity_bins": 100},
+          "strategy": {"breakout_threshold_pct": 1.5, "breakout_prob_threshold": 0.6,
+                       "range_threshold_pct": 0.5, "range_prob_threshold": 0.6},
+          "risk":     {"risk_per_trade_pct": 2.0, "leverage": 10}
+        }
 
     Args:
-        df: OHLCV-DataFrame (historisch, mindestens BACKTEST_WINDOW + 10 Kerzen)
-        config: settings.json dict
+        df: OHLCV-DataFrame (mindestens MIN_HISTORY + 10 Kerzen)
+        config: vollstaendiges Config-Dict (market/physics/strategy/risk)
         start_capital: Startkapital in USDT
-        verbose: Fortschritts-Logging
+        verbose: Fortschritts-Ausgabe
+        n_sim: Anzahl Monte-Carlo-Simulationen pro Kerze
 
     Returns:
-        Dict mit Performance-Metriken
+        dict mit Metriken: total_pnl_pct, trades_count, win_rate,
+                           max_drawdown_pct, end_capital, equity_curve (DataFrame)
     """
     from wbot.model.market_state import compute_market_state
     from wbot.model.monte_carlo import run_monte_carlo
     from wbot.forecast.range_forecast import compute_range_forecast
     from wbot.strategy.signal_logic import generate_signal
 
+    # Parameter aus Config extrahieren
     strategy_cfg = config.get('strategy', {})
-    leverage = strategy_cfg.get('leverage', 10)
+    risk_cfg     = config.get('risk', {})
+    leverage     = risk_cfg.get('leverage', 10)
+    risk_per_trade_pct = risk_cfg.get('risk_per_trade_pct', 2.0)
 
-    if len(df) < BACKTEST_WINDOW + 10:
-        logger.error(
-            f"Zu wenig Daten fuer Backtest: {len(df)} Kerzen. "
-            f"Minimum: {BACKTEST_WINDOW + 10}"
+    # signal_logic liest risk-Parameter aus strategy_cfg, also fuegen wir sie dort ein
+    merged_strategy_cfg = {**strategy_cfg, **risk_cfg}
+
+    if len(df) < MIN_HISTORY + 10:
+        logger.warning(
+            f"Zu wenig Daten fuer Backtest: {len(df)} Kerzen (min {MIN_HISTORY + 10} benoetigt)."
         )
-        return {'error': 'insufficient_data'}
+        return _empty_result(start_capital)
 
     capital = start_capital
     position = None
     trades = []
+    equity_curve = []
 
-    # Iteriere ab BACKTEST_WINDOW-ter Kerze
-    start_idx = BACKTEST_WINDOW
-    n_total = len(df) - start_idx
-
-    logger.info(f"Starte Backtest: {n_total} Kerzen | Startkapital: {start_capital:.2f} USDT")
-    logger.info(f"Simulationen pro Kerze: {BACKTEST_N_SIMULATIONS} | Schritte: {BACKTEST_N_STEPS}")
+    start_idx = MIN_HISTORY
 
     for i in range(start_idx, len(df)):
-        # Verwende letzte BACKTEST_WINDOW Kerzen als Context
-        window_df = df.iloc[max(0, i - BACKTEST_WINDOW):i].copy()
-        current_row = df.iloc[i]
+        current_row   = df.iloc[i]
         current_price = float(current_row['close'])
-        candle_high = float(current_row['high'])
-        candle_low = float(current_row['low'])
-
-        progress = i - start_idx + 1
-        if verbose and progress % 20 == 0:
-            logger.info(
-                f"Backtest Fortschritt: {progress}/{n_total} | "
-                f"Kapital: {capital:.2f} USDT | Trades: {len(trades)}"
-            )
+        candle_high   = float(current_row['high'])
+        candle_low    = float(current_row['low'])
+        ts            = df.index[i]
 
         # --- Offene Position pruefen (SL/TP) ---
         if position is not None:
-            pos_side = position['side']
-            sl_price = position['sl_price']
-            tp_price = position['tp_price']
+            pos_side    = position['side']
+            sl_price    = position['sl_price']
+            tp_price    = position['tp_price']
             entry_price = position['entry_price']
-            amount = position['amount']
-            notional = position['notional']
+            notional    = position['notional']
 
             hit_sl = (
-                (pos_side == 'long' and candle_low <= sl_price) or
+                (pos_side == 'long'  and candle_low  <= sl_price) or
                 (pos_side == 'short' and candle_high >= sl_price)
             )
             hit_tp = (
-                (pos_side == 'long' and candle_high >= tp_price) or
-                (pos_side == 'short' and candle_low <= tp_price)
+                (pos_side == 'long'  and candle_high >= tp_price) or
+                (pos_side == 'short' and candle_low  <= tp_price)
             )
 
             if hit_sl or hit_tp:
                 exit_price = sl_price if hit_sl else tp_price
-                # Slippage
                 if pos_side == 'long':
-                    exit_price = exit_price * (1 - SLIPPAGE_PCT)
-                    pnl = (exit_price - entry_price) * amount
+                    pnl_pct = (exit_price / entry_price - 1.0)
                 else:
-                    exit_price = exit_price * (1 + SLIPPAGE_PCT)
-                    pnl = (entry_price - exit_price) * amount
+                    pnl_pct = (1.0 - exit_price / entry_price)
 
-                # Fees (Entry + Exit, auf Notional-Basis)
-                fee = notional * (FEE_PCT * 2)
-                pnl -= fee
+                pnl_usd = notional * pnl_pct
+                fee     = notional * FEE_PCT * 2
+                pnl_usd -= fee
 
-                capital += pnl
-                result = 'win' if pnl > 0 else 'loss'
+                capital += pnl_usd
+                result   = 'win' if pnl_usd > 0 else 'loss'
 
                 trades.append({
-                    'entry_time': position['entry_time'],
-                    'exit_time': df.index[i],
-                    'side': pos_side,
-                    'entry_price': entry_price,
-                    'exit_price': exit_price,
-                    'pnl_usdt': pnl,
-                    'result': result,
-                    'capital_after': capital,
-                    'exit_reason': 'sl' if hit_sl else 'tp',
+                    'entry_time':   position['entry_time'],
+                    'exit_time':    ts,
+                    'side':         pos_side,
+                    'entry_price':  entry_price,
+                    'exit_price':   exit_price,
+                    'pnl_usdt':     pnl_usd,
+                    'result':       result,
+                    'capital_after': max(0.0, capital),
+                    'exit_reason':  'sl' if hit_sl else 'tp',
                 })
                 position = None
+
+                if capital <= 0:
+                    equity_curve.append({'timestamp': ts, 'equity': 0.0})
+                    break
+
+        # Equity-Tracking (ohne offene Position vereinfacht)
+        equity_curve.append({'timestamp': ts, 'equity': capital})
 
         # --- Neuen Entry nur wenn keine offene Position ---
         if position is not None:
             continue
 
-        # MarketState berechnen (mit try/except fuer Robustheit)
+        if verbose and (i - start_idx) % 50 == 0:
+            pct = (i - start_idx) / max(1, len(df) - start_idx) * 100
+            print(f"  Backtest: {pct:.0f}% | Kapital: {capital:.2f} | Trades: {len(trades)}")
+
+        # MarketState berechnen
         try:
+            window_df = df.iloc[:i].copy()
             state = compute_market_state(window_df, config=config)
         except Exception as e:
-            logger.debug(f"MarketState-Fehler bei Kerze {i}: {e}")
+            logger.debug(f"MarketState-Fehler Kerze {i}: {e}")
             continue
 
-        # Monte-Carlo (weniger Simulationen fuer Backtest-Geschwindigkeit)
+        # Monte-Carlo
         try:
-            sim_result = run_monte_carlo(
-                state,
-                n_simulations=BACKTEST_N_SIMULATIONS,
-                n_steps=BACKTEST_N_STEPS
-            )
+            sim_result = run_monte_carlo(state, n_simulations=n_sim, n_steps=50)
         except Exception as e:
-            logger.debug(f"Monte-Carlo-Fehler bei Kerze {i}: {e}")
+            logger.debug(f"Monte-Carlo-Fehler Kerze {i}: {e}")
             continue
 
         # Forecast
         try:
             forecast = compute_range_forecast(sim_result, current_price)
         except Exception as e:
-            logger.debug(f"Forecast-Fehler bei Kerze {i}: {e}")
+            logger.debug(f"Forecast-Fehler Kerze {i}: {e}")
             continue
 
-        # Signal
+        # Signal (merged_strategy_cfg enthaelt sowohl strategy- als auch risk-Parameter)
         try:
-            signal = generate_signal(forecast, state, current_price, strategy_cfg)
+            signal = generate_signal(forecast, state, current_price, merged_strategy_cfg)
         except Exception as e:
-            logger.debug(f"Signal-Fehler bei Kerze {i}: {e}")
+            logger.debug(f"Signal-Fehler Kerze {i}: {e}")
             continue
 
         if signal.action == 'wait':
             continue
 
-        # --- Trade-Entry simulieren ---
+        # Trade-Entry berechnen
         side = 'long' if 'long' in signal.action else 'short'
-
-        # Positionsgroesse: nutze risk_per_trade_pct vom aktuellen Kapital
-        risk_per_trade_pct = strategy_cfg.get('risk_per_trade_pct', 2.0)
-        risk_amount = capital * (risk_per_trade_pct / 100.0)
-        stop_distance_pct = abs(signal.entry_price - signal.stop_loss) / signal.entry_price
+        stop_distance_pct = abs(signal.entry_price - signal.stop_loss) / max(signal.entry_price, 1e-10)
 
         if stop_distance_pct < 0.0001:
             continue
 
-        margin_needed = risk_amount / stop_distance_pct
-        notional = margin_needed * leverage
-        amount = notional / current_price  # Asset-Einheiten
+        risk_amount = capital * (risk_per_trade_pct / 100.0)
+        # Notional = Risiko / Stop-Distance
+        notional    = risk_amount / stop_distance_pct
+
+        # Hebel-Limit: nicht mehr als Kapital * Hebel
+        max_notional = capital * leverage
+        notional = min(notional, max_notional)
+
+        if notional < 1.0:
+            continue
 
         # Entry mit Slippage
         if side == 'long':
-            entry_price = current_price * (1 + SLIPPAGE_PCT)
+            entry_price = signal.entry_price * (1 + SLIPPAGE_PCT)
         else:
-            entry_price = current_price * (1 - SLIPPAGE_PCT)
+            entry_price = signal.entry_price * (1 - SLIPPAGE_PCT)
 
         position = {
-            'side': side,
+            'side':        side,
             'entry_price': entry_price,
-            'sl_price': signal.stop_loss,
-            'tp_price': signal.take_profit,
-            'amount': amount,
-            'notional': notional,
-            'entry_time': df.index[i],
-            'signal_action': signal.action,
+            'sl_price':    signal.stop_loss,
+            'tp_price':    signal.take_profit,
+            'notional':    notional,
+            'entry_time':  ts,
         }
 
-        logger.debug(
-            f"Trade Entry: {side} @ {entry_price:.4f} | "
-            f"SL={signal.stop_loss:.4f} | TP={signal.take_profit:.4f}"
-        )
-
-    # Noch offene Position am Ende schliessen (zum Schlusskurs)
-    if position is not None:
-        last_price = float(df['close'].iloc[-1])
-        pos_side = position['side']
+    # Offene Position am Ende schliessen
+    if position is not None and len(df) > 0:
+        last_price  = float(df['close'].iloc[-1])
+        pos_side    = position['side']
         entry_price = position['entry_price']
-        amount = position['amount']
-        notional = position['notional']
+        notional    = position['notional']
 
         if pos_side == 'long':
-            pnl = (last_price - entry_price) * amount
+            pnl_pct = (last_price / entry_price - 1.0)
         else:
-            pnl = (entry_price - last_price) * amount
+            pnl_pct = (1.0 - last_price / entry_price)
 
-        fee = notional * (FEE_PCT * 2)
-        pnl -= fee
-        capital += pnl
-        result = 'win' if pnl > 0 else 'loss'
+        pnl_usd = notional * pnl_pct - notional * FEE_PCT * 2
+        capital += pnl_usd
 
         trades.append({
-            'entry_time': position['entry_time'],
-            'exit_time': df.index[-1],
-            'side': pos_side,
-            'entry_price': entry_price,
-            'exit_price': last_price,
-            'pnl_usdt': pnl,
-            'result': result,
-            'capital_after': capital,
-            'exit_reason': 'end_of_data',
+            'entry_time':    position['entry_time'],
+            'exit_time':     df.index[-1],
+            'side':          pos_side,
+            'entry_price':   entry_price,
+            'exit_price':    last_price,
+            'pnl_usdt':      pnl_usd,
+            'result':        'win' if pnl_usd > 0 else 'loss',
+            'capital_after': max(0.0, capital),
+            'exit_reason':   'end_of_data',
         })
 
-    return _compute_metrics(trades, start_capital, capital)
+    return _compute_metrics(trades, start_capital, capital, equity_curve)
 
 
-def _compute_metrics(trades: list, start_capital: float, final_capital: float) -> dict:
-    """Berechnet Performance-Metriken aus der Trade-Liste."""
-    if not trades:
-        return {
-            'total_trades': 0,
-            'winning_trades': 0,
-            'losing_trades': 0,
-            'win_rate': 0.0,
-            'pnl_usdt': 0.0,
-            'pnl_pct': 0.0,
-            'max_drawdown_pct': 0.0,
-            'sharpe_ratio': 0.0,
-            'calmar_ratio': 0.0,
-            'avg_win_usdt': 0.0,
-            'avg_loss_usdt': 0.0,
-            'start_capital': start_capital,
-            'final_capital': start_capital,
-        }
-
-    df_trades = pd.DataFrame(trades)
-    wins = df_trades[df_trades['result'] == 'win']
-    losses = df_trades[df_trades['result'] == 'loss']
-
-    total_pnl = final_capital - start_capital
-    pnl_pct = total_pnl / start_capital * 100.0
-
-    # Max Drawdown
-    capital_series = pd.Series([start_capital] + list(df_trades['capital_after']))
-    rolling_max = capital_series.cummax()
-    drawdown = (capital_series - rolling_max) / rolling_max * 100.0
-    max_drawdown_pct = float(abs(drawdown.min()))
-
-    # Calmar Ratio
-    calmar = (pnl_pct / max_drawdown_pct) if max_drawdown_pct > 0 else 0.0
-
-    # Sharpe-Ratio (vereinfacht, aus Trade-PnLs)
-    pnl_series = df_trades['pnl_usdt'].values
-    if len(pnl_series) > 1 and np.std(pnl_series) > 0:
-        sharpe = float(np.mean(pnl_series) / np.std(pnl_series) * np.sqrt(len(pnl_series)))
-    else:
-        sharpe = 0.0
-
+def _empty_result(start_capital: float) -> dict:
+    """Gibt ein leeres Ergebnis-Dict zurueck."""
+    equity_df = pd.DataFrame(columns=['timestamp', 'equity'])
     return {
-        'total_trades': len(trades),
-        'winning_trades': int(len(wins)),
-        'losing_trades': int(len(losses)),
-        'win_rate': float(len(wins) / len(trades) * 100.0) if trades else 0.0,
-        'pnl_usdt': float(total_pnl),
-        'pnl_pct': float(pnl_pct),
-        'max_drawdown_pct': max_drawdown_pct,
-        'sharpe_ratio': sharpe,
-        'calmar_ratio': float(calmar),
-        'avg_win_usdt': float(wins['pnl_usdt'].mean()) if len(wins) > 0 else 0.0,
-        'avg_loss_usdt': float(losses['pnl_usdt'].mean()) if len(losses) > 0 else 0.0,
-        'start_capital': start_capital,
-        'final_capital': float(final_capital),
+        'total_pnl_pct':     0.0,
+        'trades_count':      0,
+        'win_rate':          0.0,
+        'max_drawdown_pct':  0.0,
+        'end_capital':       start_capital,
+        'equity_curve':      equity_df,
     }
 
 
-def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
+def _compute_metrics(
+    trades: list,
+    start_capital: float,
+    final_capital: float,
+    equity_curve: list
+) -> dict:
+    """Berechnet Performance-Metriken."""
+    final_capital = max(0.0, final_capital)
+    total_pnl_pct = (final_capital / start_capital - 1.0) * 100.0 if start_capital > 0 else 0.0
 
-    parser = argparse.ArgumentParser(description="wbot QGRS Backtester")
-    parser.add_argument('--symbol', required=True, type=str, help="Handelspaar (z.B. BTC/USDT:USDT)")
-    parser.add_argument('--timeframe', default='1d', type=str, help="Zeitrahmen (default: 1d)")
-    parser.add_argument('--start-capital', type=float, default=1000.0, help="Startkapital USDT")
-    args = parser.parse_args()
+    equity_df = pd.DataFrame(equity_curve) if equity_curve else pd.DataFrame(columns=['timestamp', 'equity'])
 
-    symbol = args.symbol
-    timeframe = args.timeframe
+    if not equity_df.empty and 'equity' in equity_df.columns:
+        equity_df['equity'] = equity_df['equity'].clip(lower=0)
+        peak = equity_df['equity'].cummax()
+        dd   = (peak - equity_df['equity']) / peak.replace(0, np.nan)
+        max_drawdown_pct = float(dd.max(skipna=True) * 100.0) if len(dd) > 0 else 0.0
+        if np.isnan(max_drawdown_pct):
+            max_drawdown_pct = 0.0
+    else:
+        max_drawdown_pct = 0.0
 
-    # Settings laden
-    settings_path = os.path.join(PROJECT_ROOT, 'settings.json')
-    try:
-        with open(settings_path) as f:
-            config = json.load(f)
-    except Exception as e:
-        logger.error(f"Fehler beim Laden von settings.json: {e}")
-        config = {}
+    if not trades:
+        return {
+            'total_pnl_pct':    total_pnl_pct,
+            'trades_count':     0,
+            'win_rate':         0.0,
+            'max_drawdown_pct': max_drawdown_pct,
+            'end_capital':      final_capital,
+            'equity_curve':     equity_df,
+        }
 
-    # Daten laden
-    from wbot.utils.data_fetcher import fetch_ohlcv
-    logger.info(f"Lade historische Daten fuer {symbol} ({timeframe})...")
-    df = fetch_ohlcv(symbol, timeframe, limit=500)
+    wins     = sum(1 for t in trades if t['result'] == 'win')
+    win_rate = wins / len(trades) * 100.0
 
-    if df is None or len(df) < BACKTEST_WINDOW + 10:
-        logger.error(
-            f"Nicht genug Daten fuer Backtest. "
-            f"Benoetigt: {BACKTEST_WINDOW + 10}, Erhalten: {len(df) if df is not None else 0}"
-        )
-        sys.exit(1)
-
-    logger.info(f"Backtest-Daten: {len(df)} Kerzen | {df.index[0]} bis {df.index[-1]}")
-
-    # Backtest ausfuehren
-    metrics = run_backtest(df, config, start_capital=args.start_capital)
-
-    if 'error' in metrics:
-        logger.error(f"Backtest-Fehler: {metrics['error']}")
-        sys.exit(1)
-
-    # Ergebnisse speichern
-    results_dir = os.path.join(PROJECT_ROOT, 'artifacts', 'results')
-    os.makedirs(results_dir, exist_ok=True)
-    safe_name = f"{symbol.replace('/', '').replace(':', '')}_{timeframe}"
-    results_path = os.path.join(results_dir, f"backtest_{safe_name}.json")
-
-    with open(results_path, 'w') as f:
-        json.dump(metrics, f, indent=2)
-
-    logger.info(f"Ergebnisse gespeichert: {results_path}")
-
-    # Report ausgeben
-    from wbot.analysis.show_results import show_backtest_results
-    show_backtest_results(metrics)
-
-
-if __name__ == "__main__":
-    main()
+    return {
+        'total_pnl_pct':    round(total_pnl_pct, 4),
+        'trades_count':     len(trades),
+        'win_rate':         round(win_rate, 2),
+        'max_drawdown_pct': round(max_drawdown_pct, 4),
+        'end_capital':      round(final_capital, 4),
+        'equity_curve':     equity_df,
+    }
