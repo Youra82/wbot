@@ -206,6 +206,53 @@ Alle Tests laufen ohne Exchange-Verbindung (kein API-Key nötig).
 
 ---
 
+## Coin & Timeframe Empfehlungen
+
+WBot ist eine **physikbasierte Monte-Carlo-Range-Prognose-Strategie (QGRS)** — er berechnet Hurst-Exponent, Lyapunov-Exponent, fraktale Dimension und Liquiditätsgravitation, simuliert 10.000 Monte-Carlo-Pfade und prognostiziert die Tageskerzen-Range. Benötigt: maximale Datentiefe für statistische Validität und hochliquide Märkte für präzise Gravitationszentren.
+
+### Timeframe-Analyse
+
+| TF | GARCH-Fenster | Monte-Carlo-Pfade | Lyapunov-Stabilität | Geeignet |
+|---|---|---|---|---|
+| 15m / 30m | Zu kurze Zeitreihe | Übermäßig viele Konfidenzintervalle | Zu instabil | ❌❌ |
+| 1h / 2h | Kurzfristige Volatilität | Marginale statistische Basis | Instabil | ❌ |
+| 4h | Tages-Zyklen teilweise | Ausreichend für Intraday | Mittel | ⚠️ |
+| **1d** | **Mehrwöchige GARCH-Basis** | **10.000 Tages-Range-Pfade** | **Stabil** | **✅✅** |
+| 1W | Wochen-Range-Prognose | Sehr selten — wenige Signale | Sehr stabil | ✅ |
+
+WBot ist primär für **1d-Timeframe** konzipiert — die Monte-Carlo-Simulation prognostiziert die Range der nächsten Tageskerze. Die physikalischen Indikatoren (Hurst, Lyapunov, Fraktaldimension) brauchen mindestens 6-12 Monate täglicher Daten für statistische Validität.
+
+### Coin-Eignung
+
+| Coin | Hurst-Exponent | Lyapunov-Stabilität | MC-Prognosegüte | Liquiditätsgravitation | Bewertung |
+|---|---|---|---|---|---|
+| **BTC** | Hoch in Trends (H ~0.6-0.7) | Sehr stabil (längste Zeitreihe) | Beste Accuracy | Stärkste Gravitationszentren | ✅✅ Beste Wahl |
+| **ETH** | Gut — ähnlich BTC | Stabil | Sehr gute Accuracy | Klare Liquiditätszonen | ✅✅ Sehr gut |
+| **BNB** | Mittel-gut — stabiler als Altcoins | Gut | Gute Accuracy | Ausreichende Liquidität | ✅ Gut |
+| **SOL** | Mittel — explosive Phasen stören Hurst | Mittel | Moderate Accuracy | Gute Liquidität | ⚠️ Mittel |
+| **XRP** | Mittel — Random Walk in Ranging | Mittel-stabil | Mittel | Gute Liquidität | ⚠️ Mittel |
+| **LTC** | Mittel — BTC-korreliert | Gut | Moderate Accuracy | Ausreichend | ⚠️ Mittel |
+| **AVAX** | Mittel — explosive Events stören | Mittel | Moderate Accuracy | Ausreichend | ⚠️ Mittel |
+| Andere Altcoins | Gering — Lyapunov oft > 0.5 | Instabil | Schlechte Accuracy | Unzureichend | ❌ Schlecht |
+| **DOGE / SHIB** | Null — Sentiment-dominiert | Extrem instabil | Nicht prognostizierbar | Gravitationszentren irrelevant | ❌❌ Nicht geeignet |
+
+### Empfohlene Kombinationen (Ranking)
+
+| Rang | Kombination | Begründung |
+|---|---|---|
+| 🥇 1 | **BTC 1d** | Längste Zeitreihe, stabilster Hurst (~0.65 in Bullphasen), beste MC-Prognosegüte |
+| 🥇 1 | **ETH 1d** | Ähnlich BTC, sehr gute GARCH-Basis, klare Liquiditätsgravitation |
+| 🥈 2 | **BNB 1d** | Stabiles Hurst-Profil, gute Liquidität für Gravitationsberechnung |
+| 🥉 3 | **BTC 4h** | Intraday-Range-Prognose möglich — weniger robust als 1d |
+| 4 | **ETH 4h** | Analog BTC 4h |
+| ❌ | **Alles unter 4h** | GARCH-Modell nicht konvergent bei zu kurzen Zeitreihen |
+| ❌ | **DOGE / SHIB / Altcoins** | Lyapunov-Exponent chronisch > 0.5 → chaotisches Regime → Bot tradet nicht |
+
+> **Hinweis:** WBot blockiert automatisch wenn Lyapunov > 0.5 (zu chaotisch) oder Fraktaldimension > 1.7. Bei Altcoins mit kurzer Datenbasis sind diese Schwellwerte häufig überschritten — BTC und ETH auf 1d sind die einzigen Coins, bei denen alle physikalischen Bedingungen dauerhaft erfüllt sind.
+
+
+---
+
 ## Verwandte Bots
 
 | Bot | Ansatz |
