@@ -1,3 +1,9 @@
+<p align="center">
+  <img src="https://img.shields.io/badge/%F0%9F%9A%A7%20BAUSTELLE-nicht%20live-orange?style=for-the-badge" alt="Baustelle – nicht live">
+</p>
+
+> 🚧 **Baustelle:** Dieser Bot ist aktuell **nicht live** und wird weiterentwickelt.
+
 # wbot — QGRS (Quantum-Gravity Range System)
 
 Probabilistisches Trading-System zur Vorhersage der **Range der nächsten Tageskerze** via Monte-Carlo-Simulation.
