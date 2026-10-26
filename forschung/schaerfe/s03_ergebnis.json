@@ -1,0 +1,43 @@
+{
+  "koeffizienten": {
+    "log_usd": 3.28,
+    "vor60": 40.54,
+    "wal": 1.21,
+    "cluster": -12.12,
+    "btc60": -15.33
+  },
+  "einheit_koeff": "Basispunkte je Std.-Abw.",
+  "IS (angepasst, nur Info)": {
+    "n": 1758,
+    "alle_netto_pct": 0.014,
+    "t_alle": 0.4,
+    "top30_n": 528,
+    "top30_netto_pct": 0.17,
+    "t_top30": 2.15,
+    "spearman": 0.073,
+    "quintile_brutto_pct": [
+      0.11,
+      -0.032,
+      0.053,
+      0.144,
+      0.393
+    ]
+  },
+  "OOS": {
+    "n": 1100,
+    "alle_netto_pct": -0.054,
+    "t_alle": -1.31,
+    "top30_n": 330,
+    "top30_netto_pct": -0.091,
+    "t_top30": -0.97,
+    "spearman": 0.033,
+    "quintile_brutto_pct": [
+      0.077,
+      0.071,
+      0.087,
+      -0.008,
+      0.102
+    ]
+  },
+  "bestanden": false
+}

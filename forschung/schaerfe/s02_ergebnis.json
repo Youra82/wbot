@@ -1,0 +1,29 @@
+{
+  "validierung": {
+    "bss": 0.0055,
+    "signal_anteil_pct": 19.4,
+    "signal_n_ausgefuehrt": 8169,
+    "signal_avgR_maker": -0.013,
+    "signal_avgR_taker": -0.048,
+    "alle_avgR_maker": -0.047,
+    "trades": 2245,
+    "trades_pro_jahr": 1796,
+    "avgR": -0.026,
+    "pf": 0.93,
+    "summeR": -58.6
+  },
+  "endtest": {
+    "bss": 0.0001,
+    "signal_anteil_pct": 18.0,
+    "signal_n_ausgefuehrt": 9482,
+    "signal_avgR_maker": -0.034,
+    "signal_avgR_taker": -0.103,
+    "alle_avgR_maker": -0.061,
+    "trades": 2807,
+    "trades_pro_jahr": 1788,
+    "avgR": -0.045,
+    "pf": 0.89,
+    "summeR": -127.0
+  },
+  "bestanden": false
+}

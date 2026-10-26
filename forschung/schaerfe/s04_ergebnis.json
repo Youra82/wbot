@@ -1,0 +1,64 @@
+{
+  "schwelle_pump_pct": 16.1,
+  "n_IS": 50,
+  "n_OOS": 79,
+  "IS (nur Info)": {
+    "gross": {
+      "n": 25,
+      "avg_pct": 7.5,
+      "median_pct": 10.3,
+      "t": 1.37,
+      "hit": 0.68,
+      "mae_median_pct": 5.7,
+      "mae_gt50_pct": 8
+    },
+    "klein": {
+      "n": 25,
+      "avg_pct": 7.1,
+      "median_pct": 5.0,
+      "t": 1.66,
+      "hit": 0.76,
+      "mae_median_pct": 4.2,
+      "mae_gt50_pct": 4
+    },
+    "alle": {
+      "n": 50,
+      "avg_pct": 7.3,
+      "median_pct": 6.3,
+      "t": 2.13,
+      "hit": 0.72,
+      "mae_median_pct": 5.1,
+      "mae_gt50_pct": 6
+    }
+  },
+  "OOS": {
+    "gross": {
+      "n": 41,
+      "avg_pct": 14.5,
+      "median_pct": 13.2,
+      "t": 2.56,
+      "hit": 0.76,
+      "mae_median_pct": 14.3,
+      "mae_gt50_pct": 7
+    },
+    "klein": {
+      "n": 38,
+      "avg_pct": 3.6,
+      "median_pct": 2.5,
+      "t": 0.86,
+      "hit": 0.61,
+      "mae_median_pct": 9.8,
+      "mae_gt50_pct": 13
+    },
+    "alle": {
+      "n": 79,
+      "avg_pct": 9.2,
+      "median_pct": 8.2,
+      "t": 2.58,
+      "hit": 0.68,
+      "mae_median_pct": 13.2,
+      "mae_gt50_pct": 10
+    }
+  },
+  "bestanden": true
+}

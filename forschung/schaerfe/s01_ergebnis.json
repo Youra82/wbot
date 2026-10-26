@@ -1,0 +1,31 @@
+{
+  "validierung": {
+    "bss": 0.0023,
+    "schaerfe_pct": 0.02,
+    "scharf_n": 5,
+    "scharf_P_vorhergesagt": 0.649,
+    "scharf_treffer_echt": 0.0,
+    "scharf_breakeven": 0.442,
+    "trades": 5,
+    "trades_pro_jahr": 4.0,
+    "avgR": -0.695,
+    "pf": 0.03,
+    "klima_L": 0.131,
+    "p_q99": 0.171
+  },
+  "endtest": {
+    "bss": 0.0018,
+    "schaerfe_pct": 0.0,
+    "scharf_n": 1,
+    "scharf_P_vorhergesagt": 0.548,
+    "scharf_treffer_echt": 1.0,
+    "scharf_breakeven": 0.459,
+    "trades": 1,
+    "trades_pro_jahr": 1.0,
+    "avgR": 1.36,
+    "pf": 1360288012.9,
+    "klima_L": 0.128,
+    "p_q99": 0.179
+  },
+  "bestanden": false
+}

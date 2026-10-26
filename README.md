@@ -14,6 +14,9 @@ US- und Korea-Nachfrage, Wikipedia-Aufmerksamkeit, Hebel am Derivatemarkt — un
 > **Stand 26.10.2026: Der vorab festgelegte Test ist NICHT bestanden.** Der Bot läuft deshalb nur im
 > **Papiermodus** und misst jeden Tag vorwärts, ob eine Station doch Vorhersagekraft hat. Echtgeld ist gesperrt.
 > Details: [forschung/PRAEREGISTRIERUNG.md](forschung/PRAEREGISTRIERUNG.md).
+>
+> **Schärfe-Arbeit:** Fünf weitere Stationen wurden einzeln geprüft. Bestanden hat der **Listing-Short bei großem
+> Pump**, knapp verfehlt der **Funding-Querschnitt** – siehe [Schärfe-Arbeit](#schärfe-arbeit-wie-werden-die-vorhersagen-scharf-genug).
 
 (Der alte wbot v1 „QGRS“ — Monte-Carlo-Range mit Physik-Indikatoren — ist ersetzt. Er war schlechter als ein einfacher
 14-Tage-Durchschnitt und hatte einen Fehler, durch den BTC/ETH/DOGE nie handelten. Er steht in der Git-Historie.)
@@ -89,6 +92,65 @@ Nachträglicher Plausibilitätscheck (kein Beweis, Daten bekannt): Die reine Coi
 nächsten Tag Long“ ist auf Tagesbasis im Wesentlichen nur ein Teil des Marktes (Sharpe in 4 von 6 Zeiträumen nicht
 besser als einfach halten). Sie wurde deshalb nicht eingebaut.
 
+## Schärfe-Arbeit: Wie werden die Vorhersagen scharf genug?
+
+Das Histogramm oben zeigt das Kernproblem: Die Vorhersagen kleben am Klima. Profitabel wird so ein Bot nur, wenn
+die Vorhersage an manchen Tagen **deutlich** vom Durchschnitt abweicht – und dann recht behält. Deshalb wurde jede
+Idee einzeln, Stück für Stück und jeweils **vorab festgelegt** geprüft
+(Regeln und Skripte: [forschung/schaerfe/](forschung/schaerfe/)).
+
+![Übersicht der fünf Schärfe-Schritte](docs/schaerfe_uebersicht.png)
+
+### Schritt 1–2: Prämien stündlich statt täglich
+
+Die Information der Coinbase- und Korea-Prämie lebt nur Stunden. Auf Stundenbasis gemessen werden die Vorhersagen
+tatsächlich schärfer und stimmen auch (wo 20 % vorhergesagt werden, kommen ~20 % heraus). Die besten Stunden sind
+deutlich besser als die schlechtesten – aber selbst mit Limit-Einstieg (Maker-Gebühr, nur gefüllt, wenn der Kurs das
+Limit wirklich durchschreitet) bleibt das Ergebnis im Endtest unter null.
+
+![Ergebnis je Vorhersage-Gruppe, Coinbase und Korea](docs/schaerfe_quantile.png)
+
+### Schritt 3: Wal-Einzahlungen schärfen
+
+Der Wal-Effekt aus dem kbot (Short nach großen Einzahlungen auf Binance, +0,2 % brutto) sollte mit fünf
+Eigenschaften der Einzahlung (Größe, Kursanstieg davor, Absender, Häufung, BTC-Lage) geschärft werden. In der
+Lernphase brachten die besten 30 % +0,17 % netto, im Test −0,09 %. Nicht schärfbar.
+
+### Schritt 4: Listing-Short nach Pump-Größe – bestanden
+
+Nach einer Upbit-Listing-Ankündigung schießt der Coin hoch und fällt danach meist zurück. Neu: nur shorten, wenn
+der Pump in den ersten 30 min groß war (≥ 16 %, Median der Lernphase).
+
+![Listing-Short: Pump-Größe gegen Ergebnis](docs/schaerfe_listing.png)
+
+| Test ab 07/2025 | großer Pump | kleiner Pump |
+|---|---|---|
+| Ereignisse | 41 | 38 |
+| Ø Ergebnis inkl. Funding | **+14,5 %** | +3,6 % |
+| t-Wert | **2,56** | 0,86 |
+| Gewinner | 76 % | 61 % |
+
+**Einschränkung:** In der Lernphase war der Unterschied nicht zu sehen (+7,5 % gegen +7,1 %). Bei ~40 Ereignissen
+je Gruppe kann das Zufall sein; nur ~5 Listings pro Monat → Vorwärtsdaten dauern.
+
+### Schritt 5: Funding im Querschnitt – knapp
+
+Nicht „Funding hoch → Short“ für einen Coin (das ist schon zweimal gescheitert), sondern jeden Tag über 40 Coins:
+die mit dem höchsten Funding shorten, die mit dem niedrigsten kaufen. Long und Short gleichzeitig → die
+Marktrichtung fällt heraus (Beta ≈ 0).
+
+![Funding-Querschnitt: Kapitalkurve 2021–2026](docs/schaerfe_funding.png)
+
+In allen drei Zeiträumen positiv (Sharpe 1,73 / 1,54 / 1,13), aber der t-Wert liegt in Validierung und Endtest
+unter der festgelegten Hürde von 2,0. Ehrlich dazu: Die +88 %/J der Lernphase stammen fast ganz aus der ersten
+Hälfte 2021, 2022–2023 lief die Kurve seitwärts, und seit Mitte 2026 fällt sie.
+
+### Was daraus folgt
+
+Scharf werden Vorhersagen dort, wo **Ereignisse klar** sind (Listing) oder wo **viele Märkte verglichen** werden
+(Querschnitt) – nicht bei einzelnen Wetterwerten pro Coin. Beide Kandidaten sind noch **nicht** im Bot; der
+nächste ehrliche Schritt wäre ein Papier-Vorwärtstest.
+
 ## Betriebsarten (`settings.json`)
 
 | Schlüssel | Bedeutung |
@@ -143,6 +205,7 @@ src/wbot/live/                forecast.py, paper.py, trader.py (Bitget), report.
 src/wbot/analysis/research.py präregistrierter Test → artifacts/results/research.json
 src/wbot/utils/               exchange.py + telegram.py (aus jaegerbot, ccxt 4.5.35)
 forschung/PRAEREGISTRIERUNG.md  Regeln, Nachträge, Ergebnis
+forschung/schaerfe/           Schärfe-Schritte 1–5: Präregistrierung (.md), Skript (s0x_*.py), Ergebnis (.json/.csv)
 docs/                         Abbildungen dieser README (neu erzeugen: python docs/make_figures.py)
 tests/test_wbot.py            8 Tests ohne Netzwerk
 ```

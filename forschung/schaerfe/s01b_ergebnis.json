@@ -1,0 +1,59 @@
+{
+  "validierung_M": {
+    "bss": 0.0023,
+    "schaerfe_pct": 0.05,
+    "trades": 9,
+    "trades_pro_jahr": 7,
+    "P_vorhergesagt": 0.702,
+    "treffer_echt": 0.444,
+    "tp_label_treffer": 0.333,
+    "breakeven": 0.522,
+    "avgR": -0.038,
+    "pf": 0.9,
+    "summeR": -0.3,
+    "klima_L": 0.252
+  },
+  "validierung_T": {
+    "bss": 0.0023,
+    "schaerfe_pct": 0.04,
+    "trades": 8,
+    "trades_pro_jahr": 6,
+    "P_vorhergesagt": 0.719,
+    "treffer_echt": 0.375,
+    "tp_label_treffer": 0.25,
+    "breakeven": 0.558,
+    "avgR": -0.262,
+    "pf": 0.47,
+    "summeR": -2.1,
+    "klima_L": 0.252
+  },
+  "endtest_M": {
+    "bss": 0.0015,
+    "schaerfe_pct": 0.01,
+    "trades": 2,
+    "trades_pro_jahr": 1,
+    "P_vorhergesagt": 0.635,
+    "treffer_echt": 0.5,
+    "tp_label_treffer": 0.5,
+    "breakeven": 0.533,
+    "avgR": 0.179,
+    "pf": 1.58,
+    "summeR": 0.4,
+    "klima_L": 0.251
+  },
+  "endtest_T": {
+    "bss": 0.0015,
+    "schaerfe_pct": 0.01,
+    "trades": 2,
+    "trades_pro_jahr": 1,
+    "P_vorhergesagt": 0.63,
+    "treffer_echt": 1.0,
+    "tp_label_treffer": 1.0,
+    "breakeven": 0.558,
+    "avgR": 0.883,
+    "pf": 1766081347.91,
+    "summeR": 1.8,
+    "klima_L": 0.251
+  },
+  "bestanden": false
+}

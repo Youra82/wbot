@@ -1,0 +1,33 @@
+{
+  "lernen (Info)": {
+    "tage": 1095,
+    "coins_mittel": 33.6,
+    "ertrag_pa_pct": 87.9,
+    "t": 3.0,
+    "sharpe": 1.73,
+    "beta_btc": 0.039,
+    "max_dd_pct": 32.4,
+    "umsatz_tag": 0.45
+  },
+  "validierung": {
+    "tage": 456,
+    "coins_mittel": 40.0,
+    "ertrag_pa_pct": 33.1,
+    "t": 1.72,
+    "sharpe": 1.54,
+    "beta_btc": -0.101,
+    "max_dd_pct": 9.5,
+    "umsatz_tag": 0.47
+  },
+  "endtest": {
+    "tage": 572,
+    "coins_mittel": 40.0,
+    "ertrag_pa_pct": 19.5,
+    "t": 1.41,
+    "sharpe": 1.13,
+    "beta_btc": -0.074,
+    "max_dd_pct": 30.0,
+    "umsatz_tag": 0.53
+  },
+  "bestanden": false
+}

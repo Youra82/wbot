@@ -168,6 +168,122 @@ def fig_trade():
     plt.close(fig)
 
 
+SCH = os.path.join(ROOT, 'forschung', 'schaerfe')
+
+
+def fig_schaerfe_uebersicht():
+    rows = [('1 / 1b', 'Coinbase-Prämie stündlich', 'trennt gute von schlechten Stunden,\nschlägt die Kosten nicht', 'no'),
+            ('2', 'Korea-Prämie stündlich', 'schwächer, nutzt sich ab', 'no'),
+            ('3', 'Wal-Einzahlungen schärfen', 'Lernphase gut, Test −0,09 %', 'no'),
+            ('4', 'Listing-Short, großer Pump', '+14,5 % je Ereignis, t 2,56\n(nur ~41 Fälle)', 'yes'),
+            ('5', 'Funding-Querschnitt (40 Coins)', 'in allen 3 Zeiträumen positiv,\nt knapp unter 2', 'mid')]
+    col = {'yes': GREEN, 'mid': '#eda100', 'no': RED}
+    lab = {'yes': 'bestanden', 'mid': 'knapp', 'no': 'durch'}
+    fig, ax = plt.subplots(figsize=(11, 4.6))
+    ax.set_xlim(0, 11); ax.set_ylim(0, len(rows) + 0.9); ax.axis('off')
+    for x, h in ((0.15, 'Schritt'), (1.25, 'Station'), (5.0, 'Ergebnis'), (9.2, 'Urteil')):
+        ax.text(x, len(rows) + 0.45, h, weight='bold', color=INK2, va='center')
+    for i, (n, st, res, v) in enumerate(rows):
+        y = len(rows) - 1 - i
+        ax.add_patch(Rectangle((0, y + 0.06), 11, 0.88, facecolor='#ffffff' if i % 2 else '#f4f3f0', linewidth=0))
+        ax.text(0.15, y + 0.5, n, va='center', fontsize=11)
+        ax.text(1.25, y + 0.5, st, va='center', fontsize=11, weight='bold')
+        ax.text(5.0, y + 0.5, res, va='center', fontsize=10, color=INK2)
+        ax.add_patch(FancyBboxPatch((9.2, y + 0.27), 1.55, 0.46, boxstyle='round,pad=0.02,rounding_size=0.15',
+                                    facecolor=col[v], linewidth=0))
+        ax.text(9.975, y + 0.5, lab[v], va='center', ha='center', color='white', weight='bold', fontsize=10)
+    ax.set_title('Schärfe-Arbeit: fünf Stationen einzeln geprüft (jede vorab festgelegt)', loc='left', fontsize=13)
+    fig.savefig(os.path.join(OUT, 'schaerfe_uebersicht.png'), dpi=130, bbox_inches='tight')
+    plt.close(fig)
+
+
+def fig_quantile():
+    q = pd.read_csv(os.path.join(SCH, 's01b_s02_quantile.csv'))
+    q = q.groupby(['station', 'zeitraum', 'gruppe'], sort=False)['R_maker'].mean().reset_index()
+    groups = ['untere 50 %', '50–90 %', '90–99 %', 'oberste 1 %']
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.4), sharey=True)
+    for ax, st, title in zip(axes, ('coinbase', 'korea'), ('Coinbase-Prämie', 'Korea-Prämie')):
+        x = np.arange(len(groups))
+        for k, (per, c) in enumerate((('Validierung', BLUE), ('Endtest', ORANGE))):
+            v = [q[(q.station == st) & (q.zeitraum == per) & (q.gruppe == g)]['R_maker'].mean() for g in groups]
+            ax.bar(x + (k - 0.5) * 0.38, v, width=0.36, color=c, label=per, edgecolor=SURFACE, linewidth=2)
+        ax.axhline(0, color=INK2, lw=1)
+        ax.set_xticks(x); ax.set_xticklabels(groups, fontsize=9.5)
+        ax.yaxis.grid(True, color=GRID); ax.set_axisbelow(True); _clean(ax)
+        ax.set_title(title, loc='left', fontsize=11.5)
+    axes[0].set_ylabel('Ø Ergebnis je Trade (R, Limit-Einstieg)')
+    axes[0].legend(frameon=False, loc='lower right')
+    fig.suptitle('Je höher die Vorhersage, desto besser – aber nirgends stabil über null',
+                 x=0.06, ha='left', fontsize=13)
+    fig.text(0.06, -0.02, 'Stunden nach Höhe der vorhergesagten Wahrscheinlichkeit gruppiert; Mittel aus Long und Short.',
+             fontsize=9.5, color=INK2)
+    fig.savefig(os.path.join(OUT, 'schaerfe_quantile.png'), dpi=130, bbox_inches='tight')
+    plt.close(fig)
+
+
+def fig_listing():
+    d = pd.read_csv(os.path.join(SCH, 's04_ereignisse.csv'))
+    thr = d[~d.oos].pump.median()
+    fig, ax = plt.subplots(figsize=(11, 5))
+    lim = 1.0
+    for oos, c, lab in ((False, MUTED, 'Lernphase bis 06/2025'), (True, BLUE, 'Test ab 07/2025')):
+        x = d[d.oos == oos]
+        y = x.erg.clip(-lim, lim)
+        ax.scatter(x.pump.clip(-0.3, 1.5) * 100, y * 100, s=46, color=c if oos else 'none', edgecolors=c, linewidths=1.6,
+                   label=lab, zorder=3)
+    ax.axvline(thr * 100, color=GREEN, lw=2)
+    ax.axhline(0, color=INK2, lw=1)
+    o = d[d.oos]
+    for grp, (a, b) in (('klein', (o.pump.min(), thr)), ('gross', (thr, o.pump.max()))):
+        m = o[(o.pump >= a) & (o.pump < b + 1e-9)].erg.mean() if grp == 'gross' else o[o.pump < thr].erg.mean()
+        a, b = max(a, -0.3), min(b, 1.5)
+        ax.plot([a * 100, b * 100], [m * 100, m * 100], color=ORANGE, lw=3, zorder=4)
+        ax.text((a + b) / 2 * 100, -88, f'Ø Test {m * 100:+.1f} %'.replace('.', ','), color=ORANGE, fontsize=11,
+                ha='center', weight='bold', bbox=dict(facecolor=SURFACE, edgecolor=ORANGE, pad=4))
+    ax.text(thr * 100 + 2, lim * 100 - 8, f'Schwelle {thr * 100:.0f} % Pump\n(Median der Lernphase)', color=GREEN,
+            fontsize=10, va='top', bbox=dict(facecolor=SURFACE, edgecolor='none', pad=2))
+    ax.set_xlim(-30, 150)
+    ax.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f'{v:.0f} %'))
+    ax.set_xlabel('Pump in den ersten 30 min nach der Upbit-Ankündigung (%)')
+    ax.set_ylabel('Ergebnis Short 72 h inkl. Funding (%)')
+    ax.set_ylim(-lim * 100 - 5, lim * 100 + 5)
+    ax.yaxis.grid(True, color=GRID); ax.set_axisbelow(True); _clean(ax)
+    ax.legend(frameon=False, loc='lower right')
+    ax.set_title('Listing-Short: großer Pump → großer Rückfall', loc='left', fontsize=13)
+    fig.text(0.06, -0.02, 'Werte außerhalb des Bereichs am Rand abgeschnitten. In der Lernphase war kein Unterschied zu sehen – '
+             'Vorwärtsdaten nötig.', fontsize=9.5, color=INK2)
+    fig.savefig(os.path.join(OUT, 'schaerfe_listing.png'), dpi=130, bbox_inches='tight')
+    plt.close(fig)
+
+
+def fig_funding():
+    d = pd.read_csv(os.path.join(SCH, 's05_tage.csv'), index_col=0, parse_dates=True)
+    d = d[d.index >= '2021-01-01']
+    eq = (1 + d.r).cumprod()
+    fig, ax = plt.subplots(figsize=(11, 4.6))
+    spans = (('Lernen', '2021-01-01', '2023-12-31', '#f4f3f0'), ('Validierung', '2024-01-01', '2025-03-31', '#eef4fc'),
+             ('Endtest', '2025-04-01', str(d.index.max().date()), '#fdf0ea'))
+    info = json.load(open(os.path.join(SCH, 's05_ergebnis.json'), encoding='utf-8'))
+    keys = {'Lernen': 'lernen (Info)', 'Validierung': 'validierung', 'Endtest': 'endtest'}
+    for k, (name, a, b, c) in enumerate(spans):
+        ax.axvspan(pd.Timestamp(a), pd.Timestamp(b), color=c, zorder=0)
+        v = info[keys[name]]
+        txt = f'{name}\n{v["ertrag_pa_pct"]:+.0f} %/J\nSharpe {v["sharpe"]:.2f}'.replace('.', ',')
+        ax.text(pd.Timestamp(a) + pd.Timedelta(days=15), 0.97 if k != 2 else 0.30, txt,
+                transform=ax.get_xaxis_transform(), va='top', fontsize=9.5, color=INK2)
+    ax.plot(eq.index, eq.values, color=BLUE, lw=2)
+    ax.set_yscale('log')
+    ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f'{v:g}×'))
+    ax.yaxis.grid(True, color=GRID, which='both'); ax.set_axisbelow(True); _clean(ax)
+    ax.set_ylabel('Kapital (Start = 1×, log)')
+    ax.set_title('Funding-Querschnitt: Short hohes / Long niedriges Funding, marktneutral', loc='left', fontsize=13)
+    fig.text(0.06, -0.02, 'Nach Kosten und echtem Funding. Effekt lässt nach (88 → 33 → 20 %/J). '
+             'Universum = heute existierende Coins (leicht geschönt).', fontsize=9.5, color=INK2)
+    fig.savefig(os.path.join(OUT, 'schaerfe_funding.png'), dpi=130, bbox_inches='tight')
+    plt.close(fig)
+
+
 if __name__ == '__main__':
     fig_pipeline(); fig_timing(); fig_bss(); fig_probs(); fig_trade()
+    fig_schaerfe_uebersicht(); fig_quantile(); fig_listing(); fig_funding()
     print('Abbildungen in docs/ geschrieben.')
