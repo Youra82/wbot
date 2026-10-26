@@ -1,0 +1,66 @@
+# src/wbot/utils/telegram.py (uebernommen aus jaegerbot)
+import requests
+import logging
+
+logger = logging.getLogger(__name__)
+
+def send_message(bot_token, chat_id, message):
+    """Sendet eine Telegram-Nachricht. Gibt True bei Erfolg, False bei Fehler zurück."""
+    if not bot_token or not chat_id:
+        logger.warning("Telegram Bot-Token oder Chat-ID nicht konfiguriert.")
+        return False
+
+    api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {'chat_id': chat_id, 'text': message, 'parse_mode': 'HTML'}
+
+    try:
+        response = requests.post(api_url, data=payload, timeout=10)
+        if response.status_code == 200:
+            logger.info("Telegram-Nachricht gesendet.")
+            return True
+        else:
+            logger.error(f"Fehler beim Senden der Telegram-Nachricht (Status {response.status_code}): {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"Ausnahme beim Senden der Telegram-Nachricht: {e}")
+        return False
+
+def send_document(bot_token, chat_id, file_path, caption=""):
+    """Sendet ein Dokument (z.B. eine CSV-Datei) an einen Telegram-Chat."""
+    if not bot_token or not chat_id:
+        logger.warning("Telegram Bot-Token oder Chat-ID nicht konfiguriert.")
+        return
+
+    api_url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
+    payload = {
+        'chat_id': chat_id,
+        'caption': caption
+    }
+    
+    try:
+        with open(file_path, 'rb') as doc:
+            files = {'document': doc}
+            response = requests.post(api_url, data=payload, files=files, timeout=30) # Timeout für Upload erhöht
+            if response.status_code != 200:
+                logger.error(f"Fehler beim Senden des Dokuments via Telegram: {response.text}")
+    except FileNotFoundError:
+        logger.error(f"Zu sendende Datei nicht gefunden: {file_path}")
+    except Exception as e:
+        logger.error(f"Ausnahme beim Senden des Dokuments via Telegram: {e}")
+
+
+def send_photo(bot_token, chat_id, file_path, caption=""):
+    """Sendet ein Bild (PNG/JPG) mit Bildtext an einen Telegram-Chat (wie stbot). True bei Erfolg."""
+    if not bot_token or not chat_id:
+        logger.warning("Telegram Bot-Token oder Chat-ID nicht konfiguriert.")
+        return False
+    api_url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+    try:
+        with open(file_path, 'rb') as img:
+            response = requests.post(api_url, data={'chat_id': chat_id, 'caption': caption[:1024]},
+                                     files={'photo': img}, timeout=30)
+        response.raise_for_status()
+        return True
+    except Exception as e:
+        logger.error(f"Fehler beim Senden des Fotos: {e}")
+        return False

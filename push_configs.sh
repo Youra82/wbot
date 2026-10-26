@@ -1,5 +1,5 @@
 #!/bin/bash
-# wbot QGRS - Konfigurationen und Settings pushen
+# wbot v2 - settings.json und Testergebnis (research.json) pushen
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -9,11 +9,11 @@ NC='\033[0m'
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 cd "$SCRIPT_DIR"
 
-CONFIGS_DIR="src/wbot/strategy/configs"
+RESEARCH_FILE="artifacts/results/research.json"
 SETTINGS_FILE="settings.json"
 
 echo ""
-echo -e "${YELLOW}========== wbot QGRS CONFIGS PUSHEN ==========${NC}"
+echo -e "${YELLOW}========== wbot SETTINGS PUSHEN ==========${NC}"
 echo ""
 
 # Prueffe ob settings.json existiert
@@ -22,20 +22,8 @@ if [ ! -f "$SETTINGS_FILE" ]; then
     exit 1
 fi
 
-# Zaehle Config-Dateien
-CONFIG_COUNT=$(ls "$CONFIGS_DIR"/*.json 2>/dev/null | wc -l)
-
-if [ "$CONFIG_COUNT" -eq 0 ]; then
-    echo "Keine Konfigurationsdateien gefunden in: $CONFIGS_DIR"
-    echo "Fuge nur settings.json hinzu..."
-    git add "$SETTINGS_FILE"
-else
-    echo "Gefundene Konfigurationen: $CONFIG_COUNT"
-    for f in "$CONFIGS_DIR"/*.json; do
-        echo "  - $(basename "$f")"
-    done
-    git add "$CONFIGS_DIR"/*.json "$SETTINGS_FILE"
-fi
+git add "$SETTINGS_FILE"
+[ -f "$RESEARCH_FILE" ] && git add "$RESEARCH_FILE"
 
 # Prueffe ob Aenderungen vorhanden
 STAGED=$(git diff --cached --name-only)
@@ -52,7 +40,7 @@ echo ""
 
 # Commit
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M')
-git commit -m "Update: wbot QGRS Konfigurationen aktualisiert ($TIMESTAMP)"
+git commit -m "Update: wbot settings/Testergebnis aktualisiert ($TIMESTAMP)"
 
 # Push
 echo ""

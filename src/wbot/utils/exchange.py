@@ -1,0 +1,525 @@
+# src/wbot/utils/exchange.py (uebernommen aus jaegerbot v5, ccxt 4.5.35 + Hedge-Modus)
+# VERSION V28 - ADAPTED FROM TITANBOT: Robust Execution + Brute Force Cleanup
+import ccxt
+import pandas as pd
+from datetime import datetime, timezone, timedelta
+import time
+import logging
+import os
+import threading
+
+logger = logging.getLogger(__name__)
+
+# Prozessweiter Markets-Cache: LazyFineData/load_data() erzeugen pro Tages-Fetch
+# eine NEUE Exchange-Instanz (siehe backtester.py::load_data) -- ohne Cache
+# loeste jede einzelne Instanz ihren eigenen load_markets()-Netzwerk-Call aus.
+# Bei einem Mehrjahres-Backtest mit vielen parallelen Optuna-Worker-Threads
+# (--jobs -1) fuehrte das zu hunderten gleichzeitigen load_markets()-Aufrufen
+# und einem harten Bitget-429-Abbruch (2026-08-21). Marktliste ist statisch
+# genug fuer die Laufzeit eines Optimizer-Laufs -- einmal laden, per
+# ccxt.set_markets() (kein Netzwerk-Call) in jede neue Instanz uebernehmen.
+_markets_cache = {}
+_markets_cache_lock = threading.Lock()
+
+# --- Pfad für Fallback-Cache ---
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+
+def load_data_from_cache_or_fetch(symbol, timeframe, start_date_str, end_date_str, exchange_instance=None):
+    # Fallback-Funktion für Notfälle (wenn API down ist)
+    data_dir = os.path.join(PROJECT_ROOT, 'data')
+    cache_dir = os.path.join(data_dir, 'cache')
+    symbol_filename = symbol.replace('/', '-').replace(':', '-')
+    cache_file = os.path.join(cache_dir, f"{symbol_filename}_{timeframe}.csv")
+
+    if os.path.exists(cache_file):
+        try:
+            data = pd.read_csv(cache_file, index_col='timestamp', parse_dates=True)
+            data.index = pd.to_datetime(data.index, utc=True)
+            return data.loc[data.index.min():data.index.max()]
+        except Exception as e:
+            logger.warning(f"Fehler beim Laden des Caches: {e}")
+            pass
+    return pd.DataFrame()
+
+
+# Das Bitget-Konto laeuft im Hedge-Modus (posMode hedge_mode): Orders brauchen tradeSide
+# open/close, ein Close-Long ist "buy + close". ccxt 4.3.5 setzte das von sich aus; ab ccxt 4.4
+# nur noch mit hedged=True -- ohne schickt 4.5.35 One-Way-Orders (reduceOnly, ohne tradeSide),
+# die Bitget im Hedge-Modus ablehnt (SL/TSL waeren nicht gesetzt worden). Geprueft 2026-10-23:
+# mit hedged=True sendet 4.5.35 dieselben place-order/place-plan-order-Anfragen wie 4.3.5.
+HEDGE_MODE = {'hedged': True} if tuple(int(x) for x in ccxt.__version__.split('.')[:2]) >= (4, 4) else {}
+
+
+class Exchange:
+    def __init__(self, account_config):
+        self.account = account_config
+        self.exchange = getattr(ccxt, 'bitget')({
+            'apiKey': self.account.get('apiKey'),
+            'secret': self.account.get('secret'),
+            'password': self.account.get('password'),
+            'options': {
+                'defaultType': 'swap',
+            },
+            'enableRateLimit': True,
+        })
+        # Ab welchem Alter fetch_ohlcv vom "recent"- auf den "history-candles"-Endpoint
+        # wechselt -- wie ltbbot (2026-09-30). Die gepinnte ccxt 4.3.5 nimmt 1h=83 /
+        # 30m=52 / 15m=52 Tage an, Bitgets recent-Endpoint liefert fuer Startzeiten
+        # aelter als ~30 Tage (1h ~60) aber LEER -> historische Downloads endeten still
+        # (2026-10-23: VPS-Tagescheck ENA/15m + AVAX/30m ohne Daten im Fenster, die
+        # Wochenauswahl bewertete 15m/30m/1h auf abgeschnittenen Daten). Werte aus
+        # ccxt 4.5.35; beide Schluesselnamen, weil ccxt sie umbenannt hat.
+        _recent_days = {'1m': 30, '3m': 30, '5m': 30, '15m': 30, '30m': 30, '1h': 60,
+                        '2h': 120, '4h': 240, '6h': 360, '12h': 720, '1d': 1440}
+        _ohlcv_opts = self.exchange.options.setdefault('fetchOHLCV', {})
+        _ohlcv_opts['maxDaysPerTimeframe'] = dict(_ohlcv_opts.get('maxDaysPerTimeframe', {}), **_recent_days)
+        _ohlcv_opts['maxRecentDaysPerTimeframe'] = dict(_ohlcv_opts.get('maxRecentDaysPerTimeframe', {}), **_recent_days)
+        cache_key = 'bitget-swap'
+        # Lock bleibt waehrend des gesamten Ladevorgangs gehalten (nicht nur der
+        # Cache-Pruefung) -- sonst koennten mehrere Threads gleichzeitig
+        # "noch nicht im Cache" sehen und trotzdem parallel laden. So wartet
+        # jeder weitere Thread einfach, bis der erste fertig ist, und bekommt
+        # dann das Ergebnis aus dem Cache ohne eigenen Netzwerk-Call.
+        with _markets_cache_lock:
+            cached_markets = _markets_cache.get(cache_key)
+            if cached_markets is not None:
+                self.markets = cached_markets
+            else:
+                self.markets = None
+                max_retries = 5
+                for attempt in range(max_retries):
+                    try:
+                        self.markets = self.exchange.load_markets()
+                        logger.info("Bitget Märkte erfolgreich geladen.")
+                        _markets_cache[cache_key] = self.markets
+                        break
+                    except (ccxt.RateLimitExceeded, ccxt.NetworkError) as e:
+                        if attempt < max_retries - 1:
+                            time.sleep(10)
+                        else:
+                            logger.critical(f"FATAL: Fehler beim Laden der Märkte nach {max_retries} Versuchen: {e}")
+                    except Exception as e:
+                        logger.critical(f"FATAL: Fehler beim Laden der Märkte: {e}")
+                        break
+
+        if self.markets is not None and self.exchange.markets is not self.markets:
+            self.exchange.set_markets(self.markets)
+
+    # --- 1. DATA FETCHING (Live Data Priority) ---
+
+    def fetch_recent_ohlcv(self, symbol, timeframe, limit=300):
+        if not self.markets: return pd.DataFrame()
+
+        # IMMER zuerst Live-API versuchen!
+        try:
+            # Bitget liefert je Abruf hoechstens 1000 Kerzen; mehr (jaegerbot-Profil geohtf: 1300) kommt
+            # unten ueber den Historien-Download dazu.
+            effective_limit = limit
+            data = self.exchange.fetch_ohlcv(symbol, timeframe, limit=min(limit, 1000))
+
+            if data:
+                df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
+                df.set_index('timestamp', inplace=True)
+                df.sort_index(inplace=True)
+
+                # Bitgets recent-Endpoint liefert hoechstens ~90 Tage, egal welches limit
+                # (2026-10-23: 1d 89 statt 400, 4h 539 statt 1000). Live fehlte damit Historie,
+                # die der Backtest hat: Wochenfilter mit EMA >= ~9 galt als "fehlt" -> RSR/2h und
+                # AAVE/2h handelten live nie; 4h/6h-S/R-Zonen aus weniger Pivots. Aeltere Kerzen
+                # ueber den Historien-Download nachladen, bis limit erreicht ist.
+                if len(df) < effective_limit - 1:
+                    tf_ms = self.exchange.parse_timeframe(timeframe) * 1000
+                    first = df.index[0]
+                    start = first - pd.Timedelta(milliseconds=tf_ms * (effective_limit - len(df) + 2))
+                    older = self.fetch_historical_ohlcv(symbol, timeframe, start.strftime('%Y-%m-%d'),
+                                                        (first + pd.Timedelta(days=1)).strftime('%Y-%m-%d'),
+                                                        quiet=True)
+                    if not older.empty:
+                        df = pd.concat([older[older.index < first], df])
+                        df = df[~df.index.duplicated(keep='last')].sort_index()
+
+                # Letzte Kerze verwerfen, falls sie noch nicht geschlossen ist (fetch_ohlcv liefert
+                # sonst die gerade laufende Kerze als letzte Zeile -> würde Signale auf Basis
+                # unvollständiger Daten auslösen, siehe Live-vs-Backtest-Analyse 2026-07-30).
+                if not df.empty:
+                    try:
+                        tf_seconds = self.exchange.parse_timeframe(timeframe)
+                        last_close_time = df.index[-1] + pd.Timedelta(seconds=tf_seconds)
+                        if last_close_time > pd.Timestamp.now(tz='UTC'):
+                            df = df.iloc[:-1]
+                    except Exception:
+                        pass
+
+                return df.tail(effective_limit)
+
+        except Exception as e:
+            logger.error(f"FEHLER bei Live-API-Abruf für {symbol}: {e}. Versuche Fallback.")
+
+        # Fallback auf Cache
+        data = load_data_from_cache_or_fetch(symbol, timeframe, '2021-01-01', datetime.now().strftime('%Y-%m-%d'))
+        if not data.empty:
+            logger.warning(f"WARNUNG: Verwende veraltete Cache-Daten für {symbol}!")
+            return data.tail(limit)
+
+        return pd.DataFrame()
+
+    def fetch_historical_ohlcv(self, symbol, timeframe, start_date_str, end_date_str, quiet=False):
+        """
+        quiet=True unterdrueckt die Fortschritts-Logs (nicht die Fehler-Logs) --
+        fuer LazyFineData, das diese Funktion pro Kalendertag einzeln aufruft
+        (potenziell hunderte Male pro Backtest) und sonst die Konsole zuspammen
+        wuerde. Der normale Mehrjahres-Bulk-Download (optimizer.py) bleibt
+        sichtbar, aber gedrosselt (alle 10 Chunks = ~2000 Kerzen eine Zeile)
+        statt bei jeder einzelnen Anfrage zu loggen.
+        """
+        if not self.markets: return pd.DataFrame()
+        try:
+            start_ts = int(self.exchange.parse8601(start_date_str + 'T00:00:00Z'))
+            end_ts = int(self.exchange.parse8601(end_date_str + 'T00:00:00Z'))
+            all_ohlcv = []
+            chunk_count = 0
+            if not quiet:
+                logger.info(f"Lade historische Daten: {symbol} ({timeframe}) | {start_date_str} → {end_date_str}...")
+
+            # Schutz gegen Endlosschleife + Retry-mit-Backoff bei Bitget-429
+            # ("Too Many Requests") -- uebernommen aus dnabot/exchange.py. Optuna
+            # startet pro Symbol/Timeframe viele parallele Worker-Threads (--jobs -1);
+            # solange die Cache-Datei fuer diese Kombination noch nicht existiert,
+            # loesen ALLE Worker gleichzeitig einen Bulk-Download aus (Thundering-Herd,
+            # siehe backtester.py::load_data Kommentar zur Cache-Race-Condition). Ohne
+            # Retry brach der Download beim ersten 429 sofort ab und lieferte leere
+            # Daten (-> Trial schlaegt fehl), UND jeder der parallelen Worker loggte
+            # denselben Fehler ungebremst erneut -- daher die Log-Flut.
+            max_retries = 10
+            retries = 0
+
+            while start_ts < end_ts and retries < max_retries:
+                try:
+                    # WICHTIG: limit darf Bitgets tatsaechliches Server-Maximum (200 fuer
+                    # diesen Endpoint) nicht ueberschreiten. Bei zu hohem limit liefert
+                    # Bitget/ccxt still schweigend nur 200 Kerzen zurueck, verankert diese
+                    # aber am FALSCHEN Ende des nominell angefragten (aber nicht lieferbaren)
+                    # Fensters statt am angefragten "since" -- fuehrte bei schnellen
+                    # Timeframes (1m/5m/15m) zu systematischen ~8-Tage-Luecken.
+                    ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, since=start_ts, limit=200)
+                    if not ohlcv:
+                        if not all_ohlcv:
+                            # Zeitraum VOR dem Listing (z.B. 1000-Kerzen-Vorlauf auf 1d reicht
+                            # bei ARB bis 2022): Bitget liefert leer -> Fenster ueberspringen
+                            # statt abzubrechen (vorher: komplett leerer Download, Paritaetstest
+                            # 2026-10-12 ARB/15m ohne Tageskerzen fuer den Wochenfilter).
+                            start_ts += 200 * self.exchange.parse_timeframe(timeframe) * 1000
+                            continue
+                        break
+                    new_start_ts = ohlcv[-1][0] + 1
+                    if new_start_ts <= start_ts:
+                        # Live beobachtet (2026-08-24, ARB/USDT:USDT 30m -> Feindaten
+                        # 1m fuer 2026-05-02): Bitget liefert am Ende der tatsaechlich
+                        # verfuegbaren Historie wiederholt dieselbe/eine nicht
+                        # fortschreitende Kerzen-Seite zurueck, OHNE einen Fehler zu
+                        # werfen. start_ts blieb dadurch stehen, retries wurde bei
+                        # jedem "Erfolg" auf 0 zurueckgesetzt -- die Schleife lief
+                        # endlos (weder Retry-Limit noch end_ts wurden je erreicht).
+                        # Echter Haenger, kein Rate-Limit -- daher unconditional
+                        # geloggt statt hinter quiet versteckt.
+                        logger.warning(
+                            f"  ⚠ {symbol} ({timeframe}): Pagination haengt bei "
+                            f"{pd.Timestamp(start_ts, unit='ms', tz='UTC')} fest "
+                            f"(keine neuen Kerzen trotz Erfolg) -- breche ab."
+                        )
+                        break
+                    all_ohlcv.extend(ohlcv)
+                    start_ts = new_start_ts
+                    retries = 0
+                    chunk_count += 1
+                    if not quiet and chunk_count % 10 == 0:
+                        cur_date = pd.Timestamp(ohlcv[-1][0], unit='ms', tz='UTC').date()
+                        logger.info(f"  ... {symbol} ({timeframe}): {len(all_ohlcv)} Kerzen geladen, aktuell bei {cur_date}")
+                    time.sleep(self.exchange.rateLimit / 1000)
+                except (ccxt.RateLimitExceeded, ccxt.DDoSProtection):
+                    # Bitget-429 kommt bei ccxt als DDoSProtection (Unterklasse von
+                    # NetworkError) -- bei parallelen Optimierer-Prozessen haeufig.
+                    retries += 1
+                    if not quiet:
+                        logger.warning(f"  ... {symbol} ({timeframe}): Rate-Limit erreicht, warte {10 * retries}s (Versuch {retries}/{max_retries})...")
+                    time.sleep(10 * retries)
+                except ccxt.NetworkError:
+                    retries += 1
+                    time.sleep(5 * retries)
+
+            if retries >= max_retries:
+                # Lieber KEINE Daten als still abgeschnittene: ein Teilzeitraum wuerde
+                # unbemerkt optimiert/bewertet (gefunden 2026-10-13, 6 parallele Prozesse).
+                logger.error(f"  ✖ {symbol} ({timeframe}): Download nach {max_retries} Fehlversuchen abgebrochen -- keine Daten.")
+                return pd.DataFrame()
+
+            if not all_ohlcv: return pd.DataFrame()
+
+            # Laut statt still, auch bei quiet=True (Backtester laedt quiet): endet der
+            # Download deutlich vor dem angefragten Ende, ist die Historie unvollstaendig.
+            tf_ms = self.exchange.parse_timeframe(timeframe) * 1000
+            if all_ohlcv[-1][0] < min(end_ts, self.exchange.milliseconds()) - 3 * tf_ms:
+                logger.error(
+                    f"UNVOLLSTAENDIGE HISTORIE {symbol} ({timeframe}): Daten enden "
+                    f"{pd.Timestamp(all_ohlcv[-1][0], unit='ms', tz='UTC')}, angefragt bis {end_date_str}. "
+                    f"Ergebnisse auf diesen Daten sind nicht aussagekraeftig.")
+
+            df = pd.DataFrame(all_ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
+            df.set_index('timestamp', inplace=True)
+            df = df[~df.index.duplicated(keep='first')].sort_index()
+
+            if not quiet and not df.empty:
+                # Luecken-Erkennung: Bitget hat manche Fenster in der eigenen Historie
+                # schlicht nicht gespeichert (bestaetigt bei dnabot per Tages-Sweep,
+                # z.B. BTC 1h komplett fehlend 2026-04-18 bis 2026-05-10). Aktive Suche
+                # nach dem naechsten verfuegbaren Datenpunkt (wie bei dnabot) ist hier
+                # nicht implementiert -- nur Erkennung + Meldung, damit Luecken nicht
+                # unbemerkt in den Backtest einfliessen.
+                tf_seconds = self.exchange.parse_timeframe(timeframe)
+                expected_delta = pd.Timedelta(seconds=tf_seconds)
+                deltas = df.index.to_series().diff().dropna()
+                gaps = deltas[deltas > expected_delta * 1.5]
+                if len(gaps) > 0:
+                    missing = int(((gaps - expected_delta) / expected_delta).round().sum())
+                    logger.warning(
+                        f"  ⚠ {symbol} ({timeframe}): {len(gaps)} Datenlücke(n) erkannt, "
+                        f"~{missing} fehlende Kerzen insgesamt (größte Lücke: {gaps.max()})."
+                    )
+
+                target_end = pd.Timestamp(end_ts, unit='ms', tz='UTC')
+                if df.index.max() < target_end - expected_delta:
+                    logger.warning(
+                        f"  ⚠ {symbol} ({timeframe}): Download endet bei {df.index.max().date()}, "
+                        f"Ziel war {target_end.date()} — vorzeitig abgebrochen."
+                    )
+
+                logger.info(
+                    f"  ✔ {symbol} ({timeframe}): {len(df)} Kerzen fertig geladen "
+                    f"({df.index.min().date()} → {df.index.max().date()})."
+                )
+
+            return df
+        except Exception as e:
+            logger.error(f"Fehler beim Laden historischer Daten: {e}")
+            return pd.DataFrame()
+
+    def fetch_ticker(self, symbol):
+        if not self.markets: return None
+        try:
+            return self.exchange.fetch_ticker(symbol)
+        except Exception as e:
+            logger.error(f"Fehler bei Ticker: {e}")
+            return None
+
+    # --- 2. EXECUTION LOGIC (Robust & Forcing Params) ---
+
+    def set_margin_mode(self, symbol, mode='isolated'):
+        if not self.markets: return False
+        try:
+            self.exchange.set_margin_mode(mode, symbol)
+            return True
+        except Exception as e:
+            # Wir ignorieren den Fehler "Margin mode is the same" und machen trotzdem weiter
+            if 'Margin mode is the same' in str(e): return True
+            logger.warning(f"Info: Margin-Modus ({mode}) konnte nicht explizit gesetzt werden: {e}")
+            return True # WICHTIG: Return True, damit der Bot nicht abbricht!
+
+    def set_leverage(self, symbol, level=10):
+        if not self.markets: return False
+        try:
+            self.exchange.set_leverage(level, symbol)
+            return True
+        except Exception as e:
+            # Wir ignorieren den Fehler "Leverage not changed" und machen trotzdem weiter
+            if 'Leverage not changed' in str(e): return True
+            logger.warning(f"Info: Hebel ({level}x) konnte nicht explizit gesetzt werden: {e}")
+            return True # WICHTIG: Return True, damit der Bot nicht abbricht!
+
+    def create_market_order(self, symbol, side, amount, params={}):
+        # WICHTIG: Params werden hier durchgereicht (z.B. marginMode, leverage)
+        if not self.markets: return None
+        try:
+            rounded_amount = float(self.exchange.amount_to_precision(symbol, amount))
+            if rounded_amount <= 0: return None
+
+            clean_params = {**HEDGE_MODE, **params}
+            # Entferne Parameter, die Bitget via CCXT stören könnten, falls nötig
+            if 'instId' in clean_params: del clean_params['instId']
+            if 'symbol' in clean_params: del clean_params['symbol']
+
+            return self.exchange.create_order(symbol, 'market', side, rounded_amount, params=clean_params)
+        except ccxt.InsufficientFunds as e:
+            logger.error("Zu wenig Guthaben für Order.")
+            raise e
+        except Exception as e:
+            logger.error(f"Fehler bei Market Order ({symbol}): {e}")
+            return None
+
+    def place_trigger_market_order(self, symbol, side, amount, trigger_price, params={}):
+        if not self.markets: return None
+        try:
+            rounded_price = float(self.exchange.price_to_precision(symbol, trigger_price))
+            rounded_amount = float(self.exchange.amount_to_precision(symbol, amount))
+
+            order_params = {
+                **HEDGE_MODE,
+                'triggerPrice': rounded_price,
+                'reduceOnly': params.get('reduceOnly', False)
+            }
+            order_params.update(params)
+
+            if 'instId' in order_params: del order_params['instId']
+            if 'symbol' in order_params: del order_params['symbol']
+
+            logger.info(f"Sende Trigger Order: Side={side}, Price={rounded_price}")
+            return self.exchange.create_order(symbol, 'market', side, rounded_amount, params=order_params)
+        except Exception as e:
+            logger.error(f"Fehler bei Trigger Order: {e}")
+            return None
+
+    def place_trailing_stop_order(self, symbol, side, amount, activation_price, callback_rate_decimal, params={}):
+        if not self.markets: return None
+        try:
+            rounded_activation = float(self.exchange.price_to_precision(symbol, activation_price))
+            rounded_amount = float(self.exchange.amount_to_precision(symbol, amount))
+            callback_rate_float = callback_rate_decimal * 100
+
+            order_params = {
+                **HEDGE_MODE,
+                **params,
+                'trailingTriggerPrice': rounded_activation,
+                'trailingPercent': callback_rate_float,
+                'productType': 'USDT-FUTURES'
+            }
+            return self.exchange.create_order(symbol, 'market', side, rounded_amount, params=order_params)
+        except Exception as e:
+            logger.error(f"Fehler bei Trailing Stop: {e}")
+            return None
+
+    # --- 3. MANAGEMENT & CLEANUP (Brute Force Logic) ---
+
+    def fetch_open_positions(self, symbol):
+        if not self.markets: return []
+        try:
+            params = {'productType': 'USDT-FUTURES'}
+            positions = self.exchange.fetch_positions([symbol], params=params)
+            return [p for p in positions if float(p.get('contracts', 0)) > 0]
+        except Exception as e:
+            logger.error(f"Fehler bei fetch_open_positions: {e}")
+            return []
+
+    def fetch_open_trigger_orders(self, symbol):
+        if not self.markets: return []
+        try:
+            params = {'productType': 'USDT-FUTURES', 'stop': True}
+            return self.exchange.fetch_open_orders(symbol, params=params)
+        except Exception as e:
+            logger.error(f"Fehler bei Trigger Orders: {e}")
+            return []
+
+    def fetch_balance_usdt(self):
+        if not self.markets: return 0
+        try:
+            params = {'productType': 'USDT-FUTURES'}
+            balance = self.exchange.fetch_balance(params=params)
+            if 'USDT' in balance and 'free' in balance['USDT']:
+                return float(balance['USDT']['free'])
+            if 'info' in balance and 'data' in balance['info']:
+                   for asset in balance['info']['data']:
+                        if asset.get('marginCoin') == 'USDT':
+                             return float(asset.get('available', 0))
+            return 0
+        except Exception as e:
+            logger.error(f"Fehler bei Balance: {e}")
+            return 0
+
+    def fetch_realized_equity_usdt(self):
+        """
+        Realisiertes Kapital = Kontowert - unrealisierte PnL offener Positionen.
+        Basis fuer die Positionsgroesse -- exakt die Groesse, mit der Backtester und
+        Portfolio-Simulator rechnen (dort: Startkapital + geschlossene Trades).
+        Vorher nutzte Live das FREIE Guthaben (ohne gebundene Margin) und eroeffnete
+        bei bereits offenen Positionen systematisch kleinere Trades als der Backtest
+        (2026-10-11 gemessen: 21.15 frei vs. 26.86 realisiert).
+        """
+        if not self.markets: return 0
+        try:
+            balance = self.exchange.fetch_balance(params={'productType': 'USDT-FUTURES'})
+            for asset in balance.get('info') or []:
+                if asset.get('marginCoin') == 'USDT':
+                    equity = float(asset.get('accountEquity') or 0)
+                    upl = float(asset.get('unrealizedPL') or 0)
+                    return equity - upl
+            return float((balance.get('total') or {}).get('USDT') or 0)
+        except Exception as e:
+            logger.error(f"Fehler bei Equity-Abfrage: {e}")
+            return 0
+
+    def cancel_all_orders_for_symbol(self, symbol):
+        """Brute Force Löschung: Erst Massen-Löschen, dann gezieltes Einzel-Löschen"""
+        if not self.markets: return 0
+        count = 0
+
+        # 1. Versuch: Massen-Löschung (Schnell)
+        try:
+            self.exchange.cancel_all_orders(symbol, params={'productType': 'USDT-FUTURES', 'stop': False}) # Normale
+            count += 1
+        except Exception: pass
+
+        try:
+            self.exchange.cancel_all_orders(symbol, params={'productType': 'USDT-FUTURES', 'stop': True}) # Trigger/Stop
+            count += 1
+        except Exception: pass
+
+        time.sleep(0.5) # Kurz warten
+
+        # 2. Versuch: Gezielte Einzel-Löschung (Der "Zombie-Killer")
+        try:
+            # Hole ALLE offenen Orders (auch Trigger)
+            open_triggers = self.fetch_open_trigger_orders(symbol)
+            for order in open_triggers:
+                try:
+                    self.exchange.cancel_order(order['id'], symbol, params={'productType': 'USDT-FUTURES', 'stop': True})
+                    count += 1
+                    time.sleep(0.1) # Rate Limit beachten
+                except Exception as e:
+                    logger.warning(f"Konnte Einzel-Order {order['id']} nicht löschen: {e}")
+        except Exception as e:
+            logger.error(f"Fehler beim Abrufen/Löschen der Rest-Orders: {e}")
+
+        return count
+
+    def cleanup_all_open_orders(self, symbol):
+        return self.cancel_all_orders_for_symbol(symbol)
+
+    # --- jaegerbot v5: Einstieg mit angehaengtem SL/TP, strikte Positionsabfragen ---
+
+    def place_market_order_with_tpsl(self, symbol, side, amount, sl_price, tp_price):
+        """Market-Einstieg mit Position-SL/TP (Bitget presetStopLossPrice/presetStopSurplusPrice,
+        wie fibot place_limit_order_with_tpsl). Die Position ist ab dem Fill geschuetzt."""
+        amount_str = self.exchange.amount_to_precision(symbol, amount)
+        params = {
+            **HEDGE_MODE, 'marginMode': 'isolated', 'productType': 'USDT-FUTURES',
+            'stopLoss': {'triggerPrice': float(self.exchange.price_to_precision(symbol, sl_price)), 'type': 'market'},
+            'takeProfit': {'triggerPrice': float(self.exchange.price_to_precision(symbol, tp_price)), 'type': 'market'},
+        }
+        logger.info(f"Market+TP/SL: {side.upper()} {amount_str} {symbol} | SL {sl_price} | TP {tp_price}")
+        return self.exchange.create_order(symbol, 'market', side, float(amount_str), params=params)
+
+    def fetch_open_positions_strict(self, symbol=None):
+        """Offene Positionen (eines Symbols oder des ganzen Kontos). API-Fehler werden weitergereicht --
+        'keine Position' bei einem Fehler wuerde eine Waise erzeugen (mbot-Liquidation 2026-10)."""
+        if not self.markets:
+            raise RuntimeError("Maerkte nicht geladen -- Positionsstatus unbekannt")
+        params = {'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'}
+        positions = self.exchange.fetch_positions([symbol] if symbol else None, params=params)
+        return [p for p in positions if abs(float(p.get('contracts') or 0)) > 0]
+
+    def close_position_market(self, symbol, side, amount):
+        """Position schliessen (Hedge-Modus: Long mit 'sell' + reduceOnly)."""
+        close_side = 'sell' if side == 'long' else 'buy'
+        params = {**HEDGE_MODE, 'reduceOnly': True, 'marginMode': 'isolated', 'productType': 'USDT-FUTURES'}
+        return self.exchange.create_order(symbol, 'market', close_side,
+                                          float(self.exchange.amount_to_precision(symbol, amount)), params=params)

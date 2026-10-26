@@ -1,270 +1,146 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/%F0%9F%9A%A7%20BAUSTELLE-nicht%20live-orange?style=for-the-badge" alt="Baustelle – nicht live">
+  <img src="https://img.shields.io/badge/%F0%9F%93%92%20PAPIERMODUS-kein%20Echtgeld-orange?style=for-the-badge" alt="Papiermodus – kein Echtgeld">
 </p>
 
-> 🚧 **Baustelle:** Dieser Bot ist aktuell **nicht live** und wird weiterentwickelt.
+# wbot v2 — „Weltwetter“
 
-# wbot — QGRS (Quantum-Gravity Range System)
+Ein Trading-Bot, der wie ein Wetterdienst arbeitet: Statt tausend Indikatoren auf dem eigenen Kurs sammelt er
+jeden Tag Messwerte von **Wetterstationen aus der ganzen Welt** — US-Börse, Zinsen, Gold, Dollar, Stablecoin-Menge,
+US- und Korea-Nachfrage, Wikipedia-Aufmerksamkeit, Hebel am Derivatemarkt — und macht daraus eine
+**Wahrscheinlichkeitsvorhersage**: „Long-Ziel wird mit 41 % erreicht, Short-Ziel mit 30 %“.
 
-Probabilistisches Trading-System zur Vorhersage der **Range der nächsten Tageskerze** via Monte-Carlo-Simulation.
-Inspiriert von Wettervorhersage-Ensemble-Modellen: der Bot sagt nicht "der Markt steigt", sondern
-**"P(Range > 1.5%) = 63%"** — und handelt nur wenn der Erwartungswert positiv ist.
+> **Stand 26.10.2026: Der vorab festgelegte Test ist NICHT bestanden.** Der Bot läuft deshalb nur im
+> **Papiermodus** und misst jeden Tag vorwärts, ob eine Station doch Vorhersagekraft hat. Echtgeld ist gesperrt.
+> Details: [forschung/PRAEREGISTRIERUNG.md](forschung/PRAEREGISTRIERUNG.md).
+
+(Der alte wbot v1 „QGRS“ — Monte-Carlo-Range mit Physik-Indikatoren — ist ersetzt. Er war schlechter als ein einfacher
+14-Tage-Durchschnitt und hatte einen Fehler, durch den BTC/ETH/DOGE nie handelten. Er steht in der Git-Historie.)
 
 ---
 
-## Konzept
+## So funktioniert es
 
-Märkte werden wie chaotische physikalische Systeme behandelt (analog zu Wetter/Turbulenz).
-Der Preisvektor `X_t = (P, σ, D, λ, Φ, F_L, E)` enthält 7 Dimensionen:
+![Ablauf: Wetterstationen → Modelle → Ensemble → Entscheidung](docs/pipeline.png)
 
-| Variable | Bedeutung | Modul |
+Wie beim Wetterdienst gilt: **Jede Station misst etwas anderes.** Jede bekommt ihr eigenes kleines Modell, das
+sagt, wie sich die Chance auf einen erfolgreichen Long- oder Short-Trade gegenüber dem Durchschnitt („Klima“)
+verschiebt. Das Ensemble zählt diese Verschiebungen zusammen. Erst wenn die Chance deutlich über dem Klima liegt
+(≥ 45 %), wird gehandelt.
+
+| Station | Quelle | Idee |
 |---|---|---|
-| σ | GARCH(1,1) Volatilität | `physics/garch_volatility.py` |
-| D | Fraktaldimension (D = 2 - H) | `physics/fractal_dimension.py` |
-| λ | Lyapunov-Exponent (Chaos-Maß) | `physics/chaos_indicators.py` |
-| Φ | Informationsfluss (dI/dt) | `physics/information_flow.py` |
-| F_L | Liquiditäts-Gravitationskraft | `physics/liquidity_gravity.py` |
-| E | Marktenergie (multi-timeframe) | `physics/market_energy.py` |
+| Preis | Binance-Futures-Tageskerzen | aktueller Zustand (Renditen, Lage im Band, Vola) |
+| Makro | FRED (Nasdaq, VIX, US-10J-Zins), Binance PAXG (Gold), EUR/USDT (Dollar) | Risikoappetit der Welt |
+| Stablecoins | DefiLlama Gesamtmenge | frisches Kapital |
+| Coinbase | Coinbase vs. Binance | US-Nachfrage |
+| Korea | Upbit vs. Binance | asiatische Privatanleger |
+| Wikipedia | Seitenaufrufe je Coin + Bitcoin | Aufmerksamkeit der Privatanleger |
+| Funding | Binance-Funding je Coin | Hebel-Überhang |
 
-**Pipeline:** `MarketState → GBM-Simulation × 10.000 → Range-Verteilung → Signal`
+Jede Quelle wird nur mit dem Stand verwendet, der um 00:05 UTC wirklich schon veröffentlicht ist (FRED +2 Tage,
+Wikipedia und Stablecoins +1 Tag). Ein Test prüft, dass keine Zukunftsdaten hineinrutschen.
 
----
+![Welche Datentage zum Entscheidungszeitpunkt bekannt sind](docs/zeitachse.png)
 
-## Dateistruktur
+**Trade:** Einstieg zum Tages-Open, Ziel 1,5 × ATR, Stop 1 × ATR, spätestens nach 10 Tagen raus. Kosten 0,22 % +
+echtes Funding. Eine Position je Coin. Coins: BTC, ETH, SOL, XRP, DOGE, BNB.
 
-```
-wbot/
-├── src/wbot/
-│   ├── physics/           # 6 Physik-Module (Volatilität, Fraktal, Chaos, ...)
-│   ├── model/             # MarketState, GBM-Preisprozess, Monte-Carlo
-│   ├── forecast/          # Range-Forecast, Kerzenform, 4D-Phasenraum
-│   ├── strategy/          # Signal-Logik, Live-Trading (run.py)
-│   ├── analysis/          # Backtester, show_results
-│   └── utils/             # data_fetcher (Bitget/ccxt), trade_manager
-├── master_runner.py       # Cronjob-Orchestrator
-├── settings.json          # Strategie-Konfiguration
-├── secret.json            # API-Keys (nicht im Repo)
-├── run_pipeline.sh        # Backtest + Ergebnisse in einem
-├── show_results.sh        # Nur Ergebnisse / Live-Forecast anzeigen
-├── push_configs.sh        # settings.json commiten + pushen
-├── update.sh              # Sicheres Update vom Repo
-└── install.sh             # Erstinstallation (venv + deps)
-```
+![Trade-Regel: Ziel 1,5 × ATR, Stop 1 × ATR, maximal 10 Tage](docs/trade_regel.png)
 
----
+Die Vorhersage beantwortet genau diese Frage: *Wie wahrscheinlich ist es, dass die grüne Linie vor der roten
+erreicht wird?* Im Durchschnitt aller Tage („Klima“) sind das für Long 35 %, für Short 31 %.
 
-## Schnellstart
+**Prüfung wie beim Wetterdienst:** Der *Brier Skill Score* (BSS) vergleicht die Vorhersage mit dem Klima
+(= durchschnittliche Trefferquote). BSS > 0 heißt: besser als einfach immer den Durchschnitt anzunehmen.
 
-```bash
-# 1. Installieren
-./install.sh
+## Ergebnis des Tests
 
-# 2. API-Keys eintragen
-cp secret.json.example secret.json
-nano secret.json
+Die Regeln wurden **vor** dem Testlauf festgeschrieben ([PRAEREGISTRIERUNG.md](forschung/PRAEREGISTRIERUNG.md)):
+Stationen werden in der Validierung (01/2024–03/2025) ausgewählt, das Ensemble wird einmalig im unberührten
+Endtest (04/2025–10/2026) geprüft. Bestanden hätte es mit BSS > 0, Profitfaktor ≥ 1,2, Ø ≥ +0,1 R pro Trade,
+≥ 4 von 6 Coins im Plus und ≥ 100 Trades pro Jahr.
 
-# 3. Strategie konfigurieren
-nano settings.json
+![Brier Skill Score je Station in Validierung und Endtest](docs/bss_stationen.png)
 
-# 4. Backtest laufen lassen
-./run_pipeline.sh BTC/USDT:USDT 1d 1000
+Die Balken sind winzig: Ein BSS von 0,005 heißt, die Station ist 0,5 % besser als der Durchschnitt. Die meisten
+Stationen sind in einem Zeitraum leicht besser und im anderen leicht schlechter – das ist Rauschen.
+**Nur Coinbase liegt in beiden Zeiträumen über null.**
 
-# 5. Ergebnisse anzeigen
-./show_results.sh
+![Verteilung der vorhergesagten Wahrscheinlichkeiten](docs/wahrscheinlichkeiten.png)
 
-# 6. Configs pushen (wenn live)
-./push_configs.sh
-```
+Deshalb gibt es kaum Trades: Die Vorhersagen bleiben fast immer zwischen 30 und 40 %, die Handelsschwelle von 45 %
+wird nur sehr selten erreicht.
 
----
-
-## settings.json — Konfiguration
-
-```json
-{
-  "live_trading_settings": {
-    "active_strategies": [
-      { "symbol": "BTC/USDT:USDT", "timeframe": "1d", "active": true }
-    ]
-  },
-  "strategy": {
-    "breakout_threshold_pct": 1.5,      // Range-Grenze für Breakout-Signal
-    "breakout_prob_threshold": 0.60,    // Min. Wahrscheinlichkeit für Breakout
-    "range_threshold_pct": 1.0,         // Range-Grenze für Range-Signal
-    "range_prob_threshold": 0.65,       // Min. Wahrscheinlichkeit für Range
-    "risk_per_trade_pct": 2.0,          // Risiko pro Trade in % des Kapitals
-    "leverage": 10,
-    "n_simulations": 10000,             // Monte-Carlo Pfade (Backtest: 2000)
-    "n_steps_intraday": 288             // Intraday-Schritte (5-Min-Raster)
-  },
-  "physics": {
-    "garch_window": 100,
-    "fractal_window": 100,
-    "chaos_window": 50,
-    "info_window": 30,
-    "liquidity_bins": 100,
-    "energy_windows": [5, 14, 30]
-  }
-}
-```
-
----
-
-## Signal-Logik
-
-### Breakout-Signal
-- `P(Range > breakout_threshold_pct) > 0.60`
-- UND Phase-Space-Regime: `uptrend_attractor` oder `downtrend_attractor`
-- Entry: Buy/Sell-Stop 0.1% über/unter aktuellem Preis
-- TP: nächste Liquiditätszone in Richtung der Bewegung
-- SL: 95%-Quantil der simulierten Low/High-Verteilung
-
-### Range-Signal (Mean-Reversion)
-- `P(Range < range_threshold_pct) > 0.65`
-- UND Phase-Space-Regime: `range_zone`
-- Entry: Long nahe erwartetem Low, Short nahe erwartetem High
-
-### Kein Trade (wait)
-- Lyapunov-Exponent > 0.5 (zu chaotisch)
-- Fraktaldimension > 1.7 (Chaos-Regime)
-- Volatilitäts-Regime: `high` + `chaotic` gleichzeitig
-
----
-
-## 4D Phasenraum — Regime-Erkennung
-
-```
-(P, v=dP/dt, a=d²P/dt², ρ_L=Liquiditätsdichte)
-```
-
-| Regime | Beschreibung | Trading |
+| | Ergebnis Endtest | Ziel |
 |---|---|---|
-| `uptrend_attractor` | Steigende Momentum-Spirale | Breakout Long |
-| `downtrend_attractor` | Fallende Momentum-Spirale | Breakout Short |
-| `range_zone` | Oszillierende Preisbewegung | Mean-Reversion |
-| `crash_spike_zone` | Hohe Beschleunigung + Volatilität | Wait |
+| aufgenommene Stationen | nur Preis | – |
+| BSS | −0,002 | > 0 |
+| Trades pro Jahr | 29 | ≥ 100 |
+| Ø pro Trade | −0,016 R | ≥ +0,1 R |
+| Profitfaktor | 0,97 | ≥ 1,2 |
+| Coins im Plus | 2 / 6 | ≥ 4 |
 
----
+**→ Nicht bestanden.** Der Bot läuft im Papiermodus und misst alle Stationen ab jetzt vorwärts. Eine
+Vorwärtsmessung ist der einzige ehrliche Test, der noch übrig ist, weil alle historischen Daten jetzt bekannt sind.
 
-## Mathematisches Kern-Modell
+Nachträglicher Plausibilitätscheck (kein Beweis, Daten bekannt): Die reine Coinbase-Regel „Prämie > 0 → am
+nächsten Tag Long“ ist auf Tagesbasis im Wesentlichen nur ein Teil des Marktes (Sharpe in 4 von 6 Zeiträumen nicht
+besser als einfach halten). Sie wurde deshalb nicht eingebaut.
 
-**Preisprozess (erweiterte GBM):**
-```
-dP_t = μ(X_t) * P_t * dt + σ(X_t) * P_t * dW_t
-```
+## Betriebsarten (`settings.json`)
 
-**Drift:**
-```
-μ = a0 + a1*Φ + a2*F_L + a3*E
-```
-
-**Effektive Volatilität:**
-```
-σ_eff = σ_GARCH * (1 + b1*(D-1.5) + b2*max(0,λ))
-```
-
-**Liquiditäts-Gravitationspotenzial:**
-```
-U(P) = -∫ G * ρ_L(P') / |P - P'| dP'
-F_L  = -∇U(P)
-```
-
----
-
-## Cronjob (VPS)
-
-```bash
-# Alle 4 Stunden prüfen (für 1d-Timeframe)
-0 */4 * * * cd /path/to/wbot && .venv/bin/python3 master_runner.py >> logs/cron.log 2>&1
-```
-
----
-
-## Tests
-
-```bash
-cd wbot
-source .venv/bin/activate
-pytest tests/ -v
-```
-
-Alle Tests laufen ohne Exchange-Verbindung (kein API-Key nötig).
-
----
-
-## secret.json
-
-```json
-{
-  "wbot": {
-    "api_key": "...",
-    "api_secret": "...",
-    "passphrase": "..."
-  },
-  "telegram": {
-    "token": "...",
-    "chat_id": "..."
-  }
-}
-```
-
-**Nie committen** — ist in `.gitignore` ausgeschlossen.
-
----
-
-## Coin & Timeframe Empfehlungen
-
-WBot ist eine **physikbasierte Monte-Carlo-Range-Prognose-Strategie (QGRS)** — er berechnet Hurst-Exponent, Lyapunov-Exponent, fraktale Dimension und Liquiditätsgravitation, simuliert 10.000 Monte-Carlo-Pfade und prognostiziert die Tageskerzen-Range. Benötigt: maximale Datentiefe für statistische Validität und hochliquide Märkte für präzise Gravitationszentren.
-
-### Timeframe-Analyse
-
-| TF | GARCH-Fenster | Monte-Carlo-Pfade | Lyapunov-Stabilität | Geeignet |
-|---|---|---|---|---|
-| 15m / 30m | Zu kurze Zeitreihe | Übermäßig viele Konfidenzintervalle | Zu instabil | ❌❌ |
-| 1h / 2h | Kurzfristige Volatilität | Marginale statistische Basis | Instabil | ❌ |
-| 4h | Tages-Zyklen teilweise | Ausreichend für Intraday | Mittel | ⚠️ |
-| **1d** | **Mehrwöchige GARCH-Basis** | **10.000 Tages-Range-Pfade** | **Stabil** | **✅✅** |
-| 1W | Wochen-Range-Prognose | Sehr selten — wenige Signale | Sehr stabil | ✅ |
-
-WBot ist primär für **1d-Timeframe** konzipiert — die Monte-Carlo-Simulation prognostiziert die Range der nächsten Tageskerze. Die physikalischen Indikatoren (Hurst, Lyapunov, Fraktaldimension) brauchen mindestens 6-12 Monate täglicher Daten für statistische Validität.
-
-### Coin-Eignung
-
-| Coin | Hurst-Exponent | Lyapunov-Stabilität | MC-Prognosegüte | Liquiditätsgravitation | Bewertung |
-|---|---|---|---|---|---|
-| **BTC** | Hoch in Trends (H ~0.6-0.7) | Sehr stabil (längste Zeitreihe) | Beste Accuracy | Stärkste Gravitationszentren | ✅✅ Beste Wahl |
-| **ETH** | Gut — ähnlich BTC | Stabil | Sehr gute Accuracy | Klare Liquiditätszonen | ✅✅ Sehr gut |
-| **BNB** | Mittel-gut — stabiler als Altcoins | Gut | Gute Accuracy | Ausreichende Liquidität | ✅ Gut |
-| **SOL** | Mittel — explosive Phasen stören Hurst | Mittel | Moderate Accuracy | Gute Liquidität | ⚠️ Mittel |
-| **XRP** | Mittel — Random Walk in Ranging | Mittel-stabil | Mittel | Gute Liquidität | ⚠️ Mittel |
-| **LTC** | Mittel — BTC-korreliert | Gut | Moderate Accuracy | Ausreichend | ⚠️ Mittel |
-| **AVAX** | Mittel — explosive Events stören | Mittel | Moderate Accuracy | Ausreichend | ⚠️ Mittel |
-| Andere Altcoins | Gering — Lyapunov oft > 0.5 | Instabil | Schlechte Accuracy | Unzureichend | ❌ Schlecht |
-| **DOGE / SHIB** | Null — Sentiment-dominiert | Extrem instabil | Nicht prognostizierbar | Gravitationszentren irrelevant | ❌❌ Nicht geeignet |
-
-### Empfohlene Kombinationen (Ranking)
-
-| Rang | Kombination | Begründung |
-|---|---|---|
-| 🥇 1 | **BTC 1d** | Längste Zeitreihe, stabilster Hurst (~0.65 in Bullphasen), beste MC-Prognosegüte |
-| 🥇 1 | **ETH 1d** | Ähnlich BTC, sehr gute GARCH-Basis, klare Liquiditätsgravitation |
-| 🥈 2 | **BNB 1d** | Stabiles Hurst-Profil, gute Liquidität für Gravitationsberechnung |
-| 🥉 3 | **BTC 4h** | Intraday-Range-Prognose möglich — weniger robust als 1d |
-| 4 | **ETH 4h** | Analog BTC 4h |
-| ❌ | **Alles unter 4h** | GARCH-Modell nicht konvergent bei zu kurzen Zeitreihen |
-| ❌ | **DOGE / SHIB / Altcoins** | Lyapunov-Exponent chronisch > 0.5 → chaotisches Regime → Bot tradet nicht |
-
-> **Hinweis:** WBot blockiert automatisch wenn Lyapunov > 0.5 (zu chaotisch) oder Fraktaldimension > 1.7. Bei Altcoins mit kurzer Datenbasis sind diese Schwellwerte häufig überschritten — BTC und ETH auf 1d sind die einzigen Coins, bei denen alle physikalischen Bedingungen dauerhaft erfüllt sind.
-
-
----
-
-## Verwandte Bots
-
-| Bot | Ansatz |
+| Schlüssel | Bedeutung |
 |---|---|
-| `ltbbot` | Layer-basiertes Trend-Following + Trailing-Stop |
-| `mbot` | BB-Breakout + Volumen (Momentum) |
-| `dnabot` | Genome-basiertes Muster-Mining (SQLite) |
-| `dbot` | LSTM-Klassifikation (Long/Neutral/Short) |
-| `wbot` | **QGRS: Physik-basierte Range-Prognose (Monte-Carlo)** |
+| `mode` | `paper` = nur Papierkonto (Standard) · `live` = Echtgeld auf Bitget |
+| `ensemble_stations` | `auto` = in der Validierung aufgenommene Stationen, oder eigene Liste |
+| `risk_per_trade_pct` | Risiko je Trade bis zum Stop (Papier und Live) |
+| `leverage` | Hebel-Obergrenze (Live) |
+| `live_trotz_nicht_bestanden` | `false` sperrt Echtgeld, solange der Test nicht bestanden ist |
+
+Das Papierkonto rechnet mit **genau derselben Funktion** wie der Backtest ab (Test `test_paper_equals_backtest`).
+Alle Stationsvorhersagen landen in `artifacts/live/forecasts.csv`; der Tagesbericht zeigt den Vorwärts-BSS je Station.
+
+## Installation (VPS)
+
+```bash
+git clone <repo> wbot && cd wbot
+./install.sh
+cp secret.json.example secret.json && nano secret.json   # Telegram genügt im Papiermodus
+./run_pipeline.sh                                          # Daten laden + Test rechnen (~5 Min)
+./show_results.sh
+crontab -e
+# 5 * * * * cd /home/ubuntu/wbot && flock -n /tmp/wbot.lock .venv/bin/python3 master_runner.py >> logs/cron.log 2>&1
+```
+
+Der Cronjob läuft stündlich, arbeitet aber nur einmal pro UTC-Tag (Wiederholung, falls eine Quelle hakt).
+Update: `./update.sh` (behält `secret.json`, `settings.json`, Papierkonto und Datencache).
+
+## Telegram-Wetterbericht (Beispiel)
+
+```
+🌦 wbot Weltwetter 26.10.2026 (paper)
+Ensemble: Preis
+Klima: Long-Ziel 35% | Short-Ziel 32%
+
+BTC L 28% / S 35% → ⚪ kein Trade (stärkste Station: Preis)
+BNB L 32% / S 35% → ⚪ kein Trade (stärkste Station: Coinbase)
+...
+📒 Papierkonto: 1000.00 USDT (Start 1000), 0 Trades abgeschlossen
+🔬 Vorwärtsprüfung (n aufgelöste Vorhersagen, BSS > 0 = besser als Klima): ...
+```
+
+## Dateien
+
+```
+master_runner.py              täglicher Lauf (Stationen → Vorhersage → Papier/Live → Telegram)
+src/wbot/world/sources.py     Datenabruf aller Stationen (Cache data/world/)
+src/wbot/world/features.py    Merkmale je Station, zeitlich sauber ausgerichtet
+src/wbot/forecast/ensemble.py Stationsmodelle, Ensemble, Entscheidung, Walk-Forward
+src/wbot/forecast/trade_rules.py  TP/SL/Haltedauer + Abrechnung (Backtest = Papier)
+src/wbot/live/                forecast.py, paper.py, trader.py (Bitget), report.py (Telegram)
+src/wbot/analysis/research.py präregistrierter Test → artifacts/results/research.json
+src/wbot/utils/               exchange.py + telegram.py (aus jaegerbot, ccxt 4.5.35)
+forschung/PRAEREGISTRIERUNG.md  Regeln, Nachträge, Ergebnis
+docs/                         Abbildungen dieser README (neu erzeugen: python docs/make_figures.py)
+tests/test_wbot.py            8 Tests ohne Netzwerk
+```

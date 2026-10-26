@@ -1,0 +1,262 @@
+{
+  "validierung": {
+    "preis": {
+      "bss_long": 0.0034,
+      "bss_short": 0.0162,
+      "bss": 0.0098,
+      "trades": 53,
+      "trades_per_year": 42.5,
+      "avgR": 0.068,
+      "pf": 1.119,
+      "coins_pos": 3,
+      "per_coin_R": {
+        "BNB": 0.4,
+        "BTC": 3.9,
+        "DOGE": -1.8,
+        "ETH": -4.7,
+        "SOL": 8.7,
+        "XRP": -2.8
+      },
+      "longs": 47,
+      "shorts": 6,
+      "rendite_pa_1pct_risk": 2.6,
+      "max_dd_pct": 11.0,
+      "aufgenommen": true
+    },
+    "makro": {
+      "bss_long": -0.0024,
+      "bss_short": -0.0147,
+      "bss": -0.0086,
+      "trades": 12,
+      "trades_per_year": 9.6,
+      "avgR": -0.897,
+      "pf": 0.059,
+      "coins_pos": 0,
+      "per_coin_R": {
+        "BNB": -2.1,
+        "BTC": -2.1,
+        "DOGE": -2.1,
+        "ETH": -2.1,
+        "SOL": -2.1,
+        "XRP": -0.4
+      },
+      "longs": 6,
+      "shorts": 6,
+      "rendite_pa_1pct_risk": -8.3,
+      "max_dd_pct": 9.3,
+      "aufgenommen": false
+    },
+    "stablecoins": {
+      "bss_long": -0.0054,
+      "bss_short": -0.0059,
+      "bss": -0.00565237672576846,
+      "trades": 0,
+      "trades_per_year": 0,
+      "avgR": NaN,
+      "pf": NaN,
+      "coins_pos": 0,
+      "aufgenommen": false
+    },
+    "coinbase": {
+      "bss_long": 0.0024,
+      "bss_short": 0.0003,
+      "bss": 0.0013,
+      "trades": 12,
+      "trades_per_year": 9.6,
+      "avgR": 0.839,
+      "pf": 5.023,
+      "coins_pos": 5,
+      "per_coin_R": {
+        "BNB": 2.8,
+        "BTC": 2.7,
+        "DOGE": -1.3,
+        "ETH": 0.1,
+        "SOL": 2.8,
+        "XRP": 2.8
+      },
+      "longs": 12,
+      "shorts": 0,
+      "rendite_pa_1pct_risk": 8.3,
+      "max_dd_pct": 2.5,
+      "aufgenommen": false
+    },
+    "korea": {
+      "bss_long": -0.0062,
+      "bss_short": -0.0035,
+      "bss": -0.0048906387228287995,
+      "trades": 0,
+      "trades_per_year": 0,
+      "avgR": NaN,
+      "pf": NaN,
+      "coins_pos": 0,
+      "aufgenommen": false
+    },
+    "aufmerksamkeit": {
+      "bss_long": -0.0068,
+      "bss_short": -0.0057,
+      "bss": -0.0063,
+      "trades": 8,
+      "trades_per_year": 6.4,
+      "avgR": -0.066,
+      "pf": 0.893,
+      "coins_pos": 0,
+      "per_coin_R": {
+        "XRP": -0.5
+      },
+      "longs": 8,
+      "shorts": 0,
+      "rendite_pa_1pct_risk": -0.5,
+      "max_dd_pct": 4.8,
+      "aufgenommen": false
+    },
+    "derivate": {
+      "bss_long": 0.0097,
+      "bss_short": -0.0004,
+      "bss": 0.0047,
+      "trades": 17,
+      "trades_per_year": 13.6,
+      "avgR": 0.095,
+      "pf": 1.169,
+      "coins_pos": 2,
+      "per_coin_R": {
+        "BTC": 4.4,
+        "DOGE": -1.7,
+        "ETH": -0.8,
+        "SOL": 1.8,
+        "XRP": -2.1
+      },
+      "longs": 17,
+      "shorts": 0,
+      "rendite_pa_1pct_risk": 1.2,
+      "max_dd_pct": 4.8,
+      "aufgenommen": false
+    }
+  },
+  "test_info_je_station": {
+    "preis": {
+      "bss": -0.0023,
+      "trades": 45,
+      "trades_per_year": 28.9,
+      "avgR": -0.016,
+      "pf": 0.974,
+      "coins_pos": 2,
+      "per_coin_R": {
+        "BNB": -1.4,
+        "BTC": -1.2,
+        "DOGE": 1.9,
+        "ETH": -0.8,
+        "SOL": 2.6,
+        "XRP": -1.7
+      },
+      "longs": 37,
+      "shorts": 8,
+      "rendite_pa_1pct_risk": -0.7,
+      "max_dd_pct": 10.0
+    },
+    "makro": {
+      "bss": -0.0049,
+      "trades": 7,
+      "trades_per_year": 4.5,
+      "avgR": 0.736,
+      "pf": 6.021,
+      "coins_pos": 6,
+      "per_coin_R": {
+        "BNB": 0.8,
+        "BTC": 1.4,
+        "DOGE": 0.4,
+        "ETH": 0.7,
+        "SOL": 1.5,
+        "XRP": 0.3
+      },
+      "longs": 7,
+      "shorts": 0,
+      "rendite_pa_1pct_risk": 3.3,
+      "max_dd_pct": 0.0
+    },
+    "stablecoins": {
+      "bss": 0.0027489550525572892,
+      "trades": 0,
+      "trades_per_year": 0,
+      "avgR": NaN,
+      "pf": NaN,
+      "coins_pos": 0
+    },
+    "coinbase": {
+      "bss": 0.0049,
+      "trades": 6,
+      "trades_per_year": 3.8,
+      "avgR": 0.479,
+      "pf": 3.739,
+      "coins_pos": 5,
+      "per_coin_R": {
+        "BNB": 1.5,
+        "BTC": -1.1,
+        "DOGE": 0.3,
+        "ETH": 1.5,
+        "SOL": 0.2,
+        "XRP": 0.6
+      },
+      "longs": 6,
+      "shorts": 0,
+      "rendite_pa_1pct_risk": 1.8,
+      "max_dd_pct": 1.1
+    },
+    "korea": {
+      "bss": -0.0002066940335122558,
+      "trades": 0,
+      "trades_per_year": 0,
+      "avgR": NaN,
+      "pf": NaN,
+      "coins_pos": 0
+    },
+    "aufmerksamkeit": {
+      "bss": -0.003706253313351282,
+      "trades": 0,
+      "trades_per_year": 0,
+      "avgR": NaN,
+      "pf": NaN,
+      "coins_pos": 0
+    },
+    "derivate": {
+      "bss": -0.0023,
+      "trades": 8,
+      "trades_per_year": 5.1,
+      "avgR": -0.601,
+      "pf": 0.255,
+      "coins_pos": 0,
+      "per_coin_R": {
+        "BNB": -3.7,
+        "XRP": -1.1
+      },
+      "longs": 8,
+      "shorts": 0,
+      "rendite_pa_1pct_risk": -3.1,
+      "max_dd_pct": 3.7
+    }
+  },
+  "aufgenommen": [
+    "preis"
+  ],
+  "endtest_ensemble": {
+    "bss": -0.0023,
+    "trades": 45,
+    "trades_per_year": 28.9,
+    "avgR": -0.016,
+    "pf": 0.974,
+    "coins_pos": 2,
+    "per_coin_R": {
+      "BNB": -1.4,
+      "BTC": -1.2,
+      "DOGE": 1.9,
+      "ETH": -0.8,
+      "SOL": 2.6,
+      "XRP": -1.7
+    },
+    "longs": 37,
+    "shorts": 8,
+    "rendite_pa_1pct_risk": -0.7,
+    "max_dd_pct": 10.0
+  },
+  "bestanden": false,
+  "erstellt": "2026-10-26T14:27:45.826633+00:00"
+}

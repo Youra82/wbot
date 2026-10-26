@@ -12,10 +12,15 @@ venv/
 dist/
 build/
 
-# Artifacts
-artifacts/results/*.json
+# Artifacts (research.json bleibt im Repo: Stationsauswahl + Testergebnis fuer den VPS)
+artifacts/results/walkforward.csv
+artifacts/live/
 artifacts/logs/
 logs/
+
+# Datencache der Wetterstationen
+data/world/
+data/cache/*.csv
 
 # IDE
 .vscode/
